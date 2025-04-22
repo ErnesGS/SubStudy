@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 import logging
 import shutil
+import base64
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -57,25 +58,29 @@ def save_uploaded_file(uploaded_file):
         logger.error(f"Error al guardar el archivo: {e}")
         return None, None
 
-def create_subtitle_html(segments, source_lang, target_lang):
+def create_subtitle_html(segments, source_lang, target_lang, video_path):
     """Crea el HTML para mostrar los subtítulos superpuestos."""
-    subtitle_html = """
+    # Leer el video como base64
+    with open(video_path, "rb") as video_file:
+        video_data = base64.b64encode(video_file.read()).decode()
+    
+    subtitle_html = f"""
     <style>
-    .video-container {
+    .video-container {{
         position: relative;
         width: 100%;
         max-width: 800px;
         margin: 0 auto;
-    }
-    .subtitle-container {
+    }}
+    .subtitle-container {{
         position: absolute;
         bottom: 20%;
         left: 0;
         right: 0;
         text-align: center;
         z-index: 1000;
-    }
-    .subtitle {
+    }}
+    .subtitle {{
         background-color: rgba(0, 0, 0, 0.7);
         color: white;
         padding: 10px;
@@ -84,13 +89,13 @@ def create_subtitle_html(segments, source_lang, target_lang):
         font-size: 1.2em;
         display: inline-block;
         max-width: 80%;
-    }
-    .original {
+    }}
+    .original {{
         font-weight: bold;
-    }
-    .translation {
+    }}
+    .translation {{
         font-style: italic;
-    }
+    }}
     </style>
     <div class="video-container">
         <video id="videoPlayer" controls style="width: 100%;">
@@ -196,12 +201,8 @@ def main():
                         # Mostrar resultados
                         st.success("¡Subtítulos generados con éxito!")
                         
-                        # Leer el video como base64
-                        with open(video_path, "rb") as video_file:
-                            video_data = video_file.read()
-                        
                         # Crear y mostrar el HTML con los subtítulos
-                        subtitle_html = create_subtitle_html(segments, source_language, target_language)
+                        subtitle_html = create_subtitle_html(segments, source_language, target_language, video_path)
                         st.components.v1.html(subtitle_html, height=600)
                         
                     except Exception as e:
@@ -221,4 +222,4 @@ def main():
         st.error(f"Ha ocurrido un error: {str(e)}")
 
 if __name__ == "__main__":
-    main() 
+    main()
