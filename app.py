@@ -1,11 +1,16 @@
 import streamlit as st
 import os
-from transcription import TranscriptionManager
+from transcription import TranscriptionManager, RealTimeTranscriptionManager
 import tempfile
 from pathlib import Path
 import logging
 import shutil
 import base64
+import numpy as np
+import pyaudio
+import wave
+import threading
+import time
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -58,29 +63,25 @@ def save_uploaded_file(uploaded_file):
         logger.error(f"Error al guardar el archivo: {e}")
         return None, None
 
-def create_subtitle_html(segments, source_lang, target_lang, video_path):
+def create_subtitle_html(segments, source_lang, target_lang, video_path=None):
     """Crea el HTML para mostrar los subtítulos superpuestos."""
-    # Leer el video como base64
-    with open(video_path, "rb") as video_file:
-        video_data = base64.b64encode(video_file.read()).decode()
-    
-    subtitle_html = f"""
+    subtitle_html = """
     <style>
-    .video-container {{
+    .video-container {
         position: relative;
         width: 100%;
         max-width: 800px;
         margin: 0 auto;
-    }}
-    .subtitle-container {{
+    }
+    .subtitle-container {
         position: absolute;
         bottom: 20%;
         left: 0;
         right: 0;
         text-align: center;
         z-index: 1000;
-    }}
-    .subtitle {{
+    }
+    .subtitle {
         background-color: rgba(0, 0, 0, 0.7);
         color: white;
         padding: 10px;
@@ -91,29 +92,43 @@ def create_subtitle_html(segments, source_lang, target_lang, video_path):
         max-width: 80%;
         cursor: pointer;
         transition: all 0.3s ease;
-    }}
-    .subtitle:hover {{
+    }
+    .subtitle:hover {
         background-color: rgba(0, 0, 0, 0.9);
         transform: scale(1.05);
-    }}
-    .original {{
+    }
+    .original {
         font-weight: bold;
-    }}
-    .translation {{
+    }
+    .translation {
         font-style: italic;
         display: none;
         margin-top: 5px;
         padding-top: 5px;
         border-top: 1px solid rgba(255, 255, 255, 0.3);
-    }}
-    .subtitle:hover .translation {{
+    }
+    .subtitle:hover .translation {
         display: block;
-    }}
+    }
     </style>
     <div class="video-container">
-        <video id="videoPlayer" controls style="width: 100%;">
-            <source src="data:video/mp4;base64,{video_data}" type="video/mp4">
-        </video>
+    """
+    
+    if video_path:
+        # Leer el video como base64
+        with open(video_path, "rb") as video_file:
+            video_data = base64.b64encode(video_file.read()).decode()
+        subtitle_html += f"""
+            <video id="videoPlayer" controls style="width: 100%;">
+                <source src="data:video/mp4;base64,{video_data}" type="video/mp4">
+            </video>
+        """
+    else:
+        subtitle_html += """
+            <div id="videoPlayer" style="width: 100%; height: 400px; background-color: #000;"></div>
+        """
+    
+    subtitle_html += """
         <div class="subtitle-container">
     """
     
@@ -145,7 +160,9 @@ def create_subtitle_html(segments, source_lang, target_lang, video_path):
         });
     }
     
-    video.addEventListener('timeupdate', updateSubtitles);
+    if (video.tagName === 'VIDEO') {
+        video.addEventListener('timeupdate', updateSubtitles);
+    }
     </script>
     """
     return subtitle_html
@@ -156,14 +173,36 @@ def main():
     SubStudy es una aplicación que genera subtítulos automáticos y permite traducciones interactivas.
     """)
     
+    # Inicializar el estado de la sesión
+    if 'rt_manager' not in st.session_state:
+        st.session_state.rt_manager = None
+    if 'is_processing' not in st.session_state:
+        st.session_state.is_processing = False
+    
     try:
+        # Opciones de idioma (mover al principio)
+        st.header("Configuración de Idiomas")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            source_language = st.selectbox(
+                "Idioma del video",
+                ["es", "en", "fr", "de", "it", "pt", "auto"]
+            )
+        
+        with col2:
+            target_language = st.selectbox(
+                "Idioma de traducción",
+                ["es", "en", "fr", "de", "it", "pt"]
+            )
+        
         # Sección para cargar video
         st.header("Cargar Video")
         
         # Opción para subir archivo o ingresar URL
         input_type = st.radio(
             "Selecciona el tipo de entrada:",
-            ["Subir archivo", "URL de YouTube"]
+            ["Subir archivo", "URL de YouTube", "Tiempo real"]
         )
         
         video_path = None
@@ -175,31 +214,36 @@ def main():
                 video_path, temp_dir = save_uploaded_file(video_file)
                 if video_path:
                     st.video(video_file)
-        else:
+        elif input_type == "URL de YouTube":
             youtube_url = st.text_input("Ingresa la URL de YouTube")
             if youtube_url:
                 with st.spinner("Descargando video de YouTube..."):
                     video_path = download_youtube_video(youtube_url)
                     if video_path:
                         st.video(video_path)
+        else:  # Tiempo real
+            st.write("""
+            En modo tiempo real, SubStudy procesará el audio en directo y generará subtítulos en tiempo real.
+            Asegúrate de tener un micrófono conectado y configurado correctamente.
+            """)
+            
+            if st.button("Iniciar Captura de Audio"):
+                if not st.session_state.is_processing:
+                    st.session_state.is_processing = True
+                    st.session_state.rt_manager = RealTimeTranscriptionManager(
+                        source_language, target_language
+                    )
+                    st.session_state.rt_manager.start_processing()
+                    st.success("Captura de audio iniciada")
+            
+            if st.button("Detener Captura de Audio"):
+                if st.session_state.is_processing:
+                    st.session_state.is_processing = False
+                    if st.session_state.rt_manager:
+                        st.session_state.rt_manager.stop_processing()
+                    st.success("Captura de audio detenida")
         
-        if video_path:
-            # Opciones de idioma
-            st.header("Configuración de Idiomas")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                source_language = st.selectbox(
-                    "Idioma del video",
-                    ["es", "en", "fr", "de", "it", "pt", "auto"]
-                )
-            
-            with col2:
-                target_language = st.selectbox(
-                    "Idioma de traducción",
-                    ["es", "en", "fr", "de", "it", "pt"]
-                )
-            
+        if input_type != "Tiempo real" and video_path:
             if st.button("Generar Subtítulos"):
                 with st.spinner("Procesando video..."):
                     try:
@@ -229,6 +273,14 @@ def main():
                                 logger.info("Archivos temporales eliminados correctamente")
                             except Exception as e:
                                 logger.error(f"Error al limpiar archivos temporales: {e}")
+        
+        elif input_type == "Tiempo real" and st.session_state.is_processing:
+            # Mostrar subtítulos en tiempo real
+            if st.session_state.rt_manager:
+                subtitles = st.session_state.rt_manager.get_subtitles()
+                if subtitles:
+                    subtitle_html = create_subtitle_html(subtitles, source_language, target_language)
+                    st.components.v1.html(subtitle_html, height=600)
     
     except Exception as e:
         logger.error(f"Error general en la aplicación: {e}")
