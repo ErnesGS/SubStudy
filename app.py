@@ -89,12 +89,25 @@ def create_subtitle_html(segments, source_lang, target_lang, video_path):
         font-size: 1.2em;
         display: inline-block;
         max-width: 80%;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }}
+    .subtitle:hover {{
+        background-color: rgba(0, 0, 0, 0.9);
+        transform: scale(1.05);
     }}
     .original {{
         font-weight: bold;
     }}
     .translation {{
         font-style: italic;
+        display: none;
+        margin-top: 5px;
+        padding-top: 5px;
+        border-top: 1px solid rgba(255, 255, 255, 0.3);
+    }}
+    .subtitle:hover .translation {{
+        display: block;
     }}
     </style>
     <div class="video-container">
