@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from SubStudy.transcription import TranscriptionManager
+from transcription import TranscriptionManager
 import tempfile
 from pathlib import Path
 import logging

@@ -1,3 +1,5 @@
+# Nota: ffmpeg debe estar instalado en el sistema operativo
+# Descarga de https://ffmpeg.org/download.html y añade al PATH
 openai-whisper>=20231117
 ffmpeg-python>=0.2.0
 googletrans==3.1.0a0
