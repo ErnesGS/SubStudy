@@ -57,6 +57,81 @@ def save_uploaded_file(uploaded_file):
         logger.error(f"Error al guardar el archivo: {e}")
         return None, None
 
+def create_subtitle_html(segments, source_lang, target_lang):
+    """Crea el HTML para mostrar los subtítulos superpuestos."""
+    subtitle_html = """
+    <style>
+    .video-container {
+        position: relative;
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .subtitle-container {
+        position: absolute;
+        bottom: 20%;
+        left: 0;
+        right: 0;
+        text-align: center;
+        z-index: 1000;
+    }
+    .subtitle {
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+        font-size: 1.2em;
+        display: inline-block;
+        max-width: 80%;
+    }
+    .original {
+        font-weight: bold;
+    }
+    .translation {
+        font-style: italic;
+    }
+    </style>
+    <div class="video-container">
+        <video id="videoPlayer" controls style="width: 100%;">
+            <source src="data:video/mp4;base64,{video_data}" type="video/mp4">
+        </video>
+        <div class="subtitle-container">
+    """
+    
+    for segment in segments:
+        subtitle_html += f"""
+            <div class="subtitle" data-start="{segment['start']}" data-end="{segment['end']}">
+                <div class="original">{segment['text']}</div>
+                <div class="translation">{segment['translation']}</div>
+            </div>
+        """
+    
+    subtitle_html += """
+        </div>
+    </div>
+    <script>
+    const video = document.getElementById('videoPlayer');
+    const subtitles = document.querySelectorAll('.subtitle');
+    
+    function updateSubtitles() {
+        const currentTime = video.currentTime;
+        subtitles.forEach(subtitle => {
+            const start = parseFloat(subtitle.dataset.start);
+            const end = parseFloat(subtitle.dataset.end);
+            if (currentTime >= start && currentTime <= end) {
+                subtitle.style.display = 'inline-block';
+            } else {
+                subtitle.style.display = 'none';
+            }
+        });
+    }
+    
+    video.addEventListener('timeupdate', updateSubtitles);
+    </script>
+    """
+    return subtitle_html
+
 def main():
     st.title("SubStudy - Subtítulos Interactivos")
     st.write("""
@@ -121,24 +196,13 @@ def main():
                         # Mostrar resultados
                         st.success("¡Subtítulos generados con éxito!")
                         
-                        # Mostrar subtítulos interactivos
-                        st.header("Subtítulos Interactivos")
+                        # Leer el video como base64
+                        with open(video_path, "rb") as video_file:
+                            video_data = video_file.read()
                         
-                        for segment in segments:
-                            # Crear un contenedor para cada segmento
-                            with st.container():
-                                # Mostrar el texto original
-                                st.write(f"**Original ({source_language}):** {segment['text']}")
-                                
-                                # Mostrar la traducción
-                                st.write(f"**Traducción ({target_language}):** {segment['translation']}")
-                                
-                                # Mostrar el tiempo
-                                start_time = segment['start']
-                                end_time = segment['end']
-                                st.write(f"Tiempo: {start_time:.2f}s - {end_time:.2f}s")
-                                
-                                st.divider()
+                        # Crear y mostrar el HTML con los subtítulos
+                        subtitle_html = create_subtitle_html(segments, source_language, target_language)
+                        st.components.v1.html(subtitle_html, height=600)
                         
                     except Exception as e:
                         logger.error(f"Error al procesar el video: {e}")
