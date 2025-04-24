@@ -40,9 +40,15 @@ Actualmente, existen herramientas como:
 - **Modelos de STT**: Whisper (OpenAI).
 - **APIs de Traducción**: DeepL o Google Translate.
 - **Integración con Anki**: AnkiConnect.
-- **Bases de Datos**: SQLite o Firebase (para almacenamiento de palabras aprendidas).
+- **Interfaz de la aplicación**: PySide6/Qt
 
 ## 5. Fuentes de Datos Previstas
 
 - **Audio y video en tiempo real** de plataformas como YouTube, Twitch o archivos locales.
 - **Datos generados** por los usuarios en su interacción con las traducciones y flashcards.
+
+## 6. Modo de empleo
+Para utilizar la aplicación:
+- Clona el repositorio en tu equipo.
+- **Instala las dependencias**: pip install -r requirements.txt
+- **Ejecuta la aplicación**: python app.py
