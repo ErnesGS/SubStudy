@@ -1,8 +1,10 @@
 import sys
 import pyaudio
+import requests
+import json
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QComboBox, QSpacerItem, QSizePolicy, QFrame
+    QPushButton, QComboBox, QSpacerItem, QSizePolicy, QFrame, QMessageBox
 )
 from PySide6.QtCore import Qt, QTimer, QPoint, Slot, QEvent, Signal
 from PySide6.QtGui import QMouseEvent, QPalette, QColor, QFontMetrics
@@ -95,6 +97,13 @@ class TranslationPopup(QWidget):
 
 # Clase Principal Modificada
 class SubtitleOverlayWindow(QWidget):
+    # --- CONSTANTES PARA ANKI ---
+    ANKICONNECT_URL = "http://localhost:8765"
+    ANKI_DECK_NAME = "SubStudy" # Mazo por defecto
+    ANKI_MODEL_NAME = "Básico" # Modelo de nota básico
+    ANKI_FRONT_FIELD = "Anverso" # Campo para el texto original
+    ANKI_BACK_FIELD = "Reverso"   # Campo para la traducción
+
     def __init__(self):
         super().__init__()
         self.rt_manager = None
@@ -175,8 +184,24 @@ class SubtitleOverlayWindow(QWidget):
         self.stop_button.clicked.connect(self.stop_capture)
         self.stop_button.setEnabled(False) # Deshabilitado inicialmente
 
+        # --- NUEVO: Botón Enviar a Anki ---
+        self.anki_button = QPushButton("Añadir a Anki")
+        self.anki_button.clicked.connect(self.send_to_anki)
+        self.anki_button.setToolTip(f"Enviar a Anki (Mazo: {self.ANKI_DECK_NAME}, Modelo: {self.ANKI_MODEL_NAME})")
+        self.anki_button.setEnabled(False) # Deshabilitado inicialmente
+
+        # --- NUEVO: Botón Cerrar ---
+        self.close_button = QPushButton("X") # Botón simple de cierre
+        self.close_button.setToolTip("Cerrar aplicación")
+        self.close_button.setFixedWidth(30) # Hacerlo pequeño
+        self.close_button.setStyleSheet("QPushButton { color: white; background-color: #555555; border-radius: 5px; } QPushButton:hover { background-color: #cc0000; }")
+        self.close_button.clicked.connect(self.close) # Conectar a self.close
+
+        # Añadir botones al layout
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.stop_button)
+        controls_layout.addWidget(self.anki_button) # Añadir botón Anki
+        controls_layout.addWidget(self.close_button) # Añadir botón Cerrar
 
         # --- Layout para Subtítulos (Original y Traducción) ---
         subtitles_layout = QVBoxLayout()
@@ -206,7 +231,7 @@ class SubtitleOverlayWindow(QWidget):
         self.setLayout(main_layout)
 
         # Tamaño inicial (ajustable)
-        self.resize(600, 200) 
+        self.resize(700, 150) 
 
     def populate_audio_devices(self):
         self.audio_device_combo.clear()
@@ -262,6 +287,8 @@ class SubtitleOverlayWindow(QWidget):
             # Actualizar estado de la UI
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
+            self.anki_button.setEnabled(False) # Asegurar que Anki esté deshabilitado al inicio
+            self.close_button.setEnabled(True) # El botón de cerrar siempre activo
             self.source_lang_combo.setEnabled(False)
             self.target_lang_combo.setEnabled(False)
             self.audio_device_combo.setEnabled(False)
@@ -275,6 +302,7 @@ class SubtitleOverlayWindow(QWidget):
             # Restaurar estado botones si falla
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
+            self.anki_button.setEnabled(False)
             self.source_lang_combo.setEnabled(True)
             self.target_lang_combo.setEnabled(True)
             self.audio_device_combo.setEnabled(True)
@@ -295,6 +323,8 @@ class SubtitleOverlayWindow(QWidget):
         # Actualizar estado de la UI
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+        self.anki_button.setEnabled(False) # Deshabilitar Anki al detener
+        self.close_button.setEnabled(True)
         self.source_lang_combo.setEnabled(True)
         self.target_lang_combo.setEnabled(True)
         self.audio_device_combo.setEnabled(True)
@@ -322,6 +352,9 @@ class SubtitleOverlayWindow(QWidget):
                     # actualizamos su texto.
                     if self.translation_popup.isVisible():
                          self.translation_popup.setText(f"({self.current_translation})")
+
+                    # --- Habilitar botón Anki si hay texto ---
+                    self.anki_button.setEnabled(bool(self.current_original)) 
 
             except Exception as e:
                 logger.error(f"Error al obtener/mostrar subtítulos: {e}")
@@ -362,10 +395,11 @@ class SubtitleOverlayWindow(QWidget):
             self._offset = None
         super().mouseReleaseEvent(event)
 
-    # --- Manejo del cierre ---
+    # --- Manejo del cierre (MODIFICADO) ---
     def closeEvent(self, event):
         logger.info("Evento de cierre detectado.")
         self.stop_capture() # Asegurarse de detener todo
+
         # Terminar PyAudio global si ya no se necesita
         if self.audio_interface:
             try:
@@ -375,7 +409,20 @@ class SubtitleOverlayWindow(QWidget):
                  logger.error(f"Error al terminar PyAudio global en closeEvent: {e}")
             finally:
                  self.audio_interface = None
-        event.accept() # Aceptar el cierre
+        
+        # Ocultar y cerrar el popup explícitamente
+        if self.translation_popup:
+            self.translation_popup.close() 
+
+        logger.info("Aceptando evento de cierre...")
+        event.accept() # Aceptar el cierre de la ventana
+
+        # --- OPCIONAL (si la ventana cierra pero la app no termina): ---
+        # Descomentar la siguiente línea para forzar la salida del bucle de eventos principal.
+        # A veces es necesario si quedan hilos no demonio o referencias activas.
+        # logger.info("Forzando salida de la aplicación.")
+        # QApplication.instance().quit() 
+        # --------------------------------------------------------------
 
     # --- SLOT para mostrar/ocultar el POPUP ---
     @Slot(bool) 
@@ -408,6 +455,102 @@ class SubtitleOverlayWindow(QWidget):
         else:
             # Ocultar el popup
             self.translation_popup.hide()
+
+    # --- NUEVO SLOT PARA ENVIAR A ANKI ---
+    @Slot()
+    def send_to_anki(self):
+        if not self.current_original or not self.current_translation:
+            logger.warning("Intento de enviar a Anki sin datos válidos.")
+            self.show_error_message("No hay subtítulo actual para enviar.")
+            return
+
+        logger.info(f"Enviando a Anki: '{self.current_original}' / '{self.current_translation}'")
+        
+        # Preparar datos para AnkiConnect
+        note_data = {
+            "deckName": self.ANKI_DECK_NAME,
+            "modelName": self.ANKI_MODEL_NAME,
+            "fields": {
+                self.ANKI_FRONT_FIELD: self.current_original,
+                self.ANKI_BACK_FIELD: self.current_translation
+            },
+            "options": {
+                "allowDuplicate": False # Evitar duplicados exactos
+            },
+            "tags": [
+                "substudy", # Etiqueta general
+                "realtime"  # Etiqueta para notas de esta app
+            ]
+        }
+        payload = json.dumps({"action": "addNote", "version": 6, "params": {"note": note_data}})
+
+        # Realizar la petición a AnkiConnect
+        try:
+            response = requests.post(self.ANKICONNECT_URL, data=payload, timeout=3) # Timeout de 3s
+            response.raise_for_status() # Lanza excepción para errores HTTP (4xx, 5xx)
+            result = response.json()
+
+            if result.get("error") is not None:
+                error_msg = result["error"]
+                logger.error(f"Error de AnkiConnect: {error_msg}")
+                # Mostrar error específico al usuario
+                if "deck was not found" in error_msg:
+                     self.show_error_message(f"Error Anki: Mazo '{self.ANKI_DECK_NAME}' no encontrado.\nPor favor, créalo en Anki.")
+                elif "model was not found" in error_msg:
+                     self.show_error_message(f"Error Anki: Modelo '{self.ANKI_MODEL_NAME}' no encontrado.\nPor favor, asegúrate de que existe.")
+                elif "duplicate" in error_msg:
+                     self.show_temporary_message("Nota duplicada (ya existe en Anki).", is_error=True)
+                else:
+                     self.show_error_message(f"Error de Anki: {error_msg}")
+            elif result.get("result") is not None:
+                logger.info(f"Nota añadida a Anki con ID: {result['result']}")
+                # Mostrar mensaje de éxito temporal en el botón
+                self.show_temporary_message("¡Enviado a Anki!", is_error=False)
+            else:
+                logger.warning(f"Respuesta inesperada de AnkiConnect: {result}")
+                self.show_error_message("Respuesta inesperada de Anki.")
+
+        except requests.exceptions.ConnectionError:
+            logger.error("Error de conexión con AnkiConnect. ¿Está Anki abierto y AnkiConnect instalado/activo?")
+            self.show_error_message("Error: No se pudo conectar con Anki.\nAsegúrate de que Anki esté abierto y AnkiConnect instalado.")
+        except requests.exceptions.Timeout:
+            logger.error("Timeout al conectar con AnkiConnect.")
+            self.show_error_message("Error: Tiempo de espera agotado al conectar con Anki.")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error en la petición a AnkiConnect: {e}")
+            self.show_error_message(f"Error de red al contactar Anki: {e}")
+        except json.JSONDecodeError:
+             logger.error("Error al decodificar la respuesta JSON de AnkiConnect.")
+             self.show_error_message("Error: Respuesta inválida de Anki.")
+
+
+    # --- Funciones auxiliares para mensajes ---
+    def show_error_message(self, message):
+        """Muestra un diálogo de error modal."""
+        QMessageBox.warning(self, "Error", message)
+
+    def show_temporary_message(self, message, duration_ms=2000, is_error=False):
+        """Muestra un mensaje temporal en el botón de Anki."""
+        original_text = self.anki_button.text()
+        original_stylesheet = self.anki_button.styleSheet()
+        
+        self.anki_button.setEnabled(False) # Deshabilitar mientras muestra mensaje
+        self.anki_button.setText(message)
+        if is_error:
+             self.anki_button.setStyleSheet("background-color: #b04040; color: white;") # Rojo para error
+        else:
+             self.anki_button.setStyleSheet("background-color: #40b040; color: white;") # Verde para éxito
+
+        # Timer para restaurar el botón
+        QTimer.singleShot(duration_ms, lambda: self.restore_anki_button(original_text, original_stylesheet))
+
+    def restore_anki_button(self, original_text, original_stylesheet):
+        """Restaura el texto y estilo del botón Anki."""
+        if self.anki_button: # Comprobar si aún existe
+            self.anki_button.setText(original_text)
+            self.anki_button.setStyleSheet(original_stylesheet)
+            # Volver a habilitar solo si hay texto actual
+            self.anki_button.setEnabled(bool(self.current_original) and self.stop_button.isEnabled())
 
 # --- Punto de Entrada ---
 if __name__ == "__main__":

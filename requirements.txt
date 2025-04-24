@@ -1,9 +1,19 @@
-# Nota: ffmpeg debe estar instalado en el sistema operativo
-# Descarga de https://ffmpeg.org/download.html y añade al PATH
+# Nota: ffmpeg debe estar instalado en el sistema operativo si se usa pydub para
+# procesamiento de archivos (aunque no se usa activamente en el modo realtime actual).
+# Descarga de https://ffmpeg.org/download.html y añade al PATH si es necesario.
+
+# Core ML/Audio
 openai-whisper>=20231117
-ffmpeg-python>=0.2.0
-googletrans==3.1.0a0
-pytube>=15.0.0
-pydub>=0.25.1
-streamlit>=1.28.0
-python-dotenv>=1.0.0
+pyaudio>=0.2.11 # Para captura de audio en tiempo real
+
+# Traducción
+googletrans==3.1.0a0 # O la versión estable si prefieres (googletrans>4.0.0)
+
+# GUI
+PySide6>=6.4.0 # Para la interfaz gráfica de escritorio
+
+# Anki Integration
+requests>=2.25.1 # Para AnkiConnect
+
+# Opcional (si TranscriptionManager se usa para procesar archivos de video/audio)
+# pydub>=0.25.1 
