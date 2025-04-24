@@ -187,7 +187,7 @@ def main():
         with col1:
             source_language = st.selectbox(
                 "Idioma del video",
-                ["es", "en", "fr", "de", "it", "pt", "auto"]
+                ["en", "es", "fr", "de", "it", "pt", "auto"]
             )
         
         with col2:

@@ -144,11 +144,13 @@ class RealTimeTranscriptionManager:
                 device_name = "Varios micrófonos (Intel® Smart Sound Technology for Digital Microphones)"
                 logger.info(f"Usando dispositivo de audio: {device_name}")
                 
+                # Configurar la entrada de audio
                 input_stream = ffmpeg.input(
-                    f'audio={device_name}',
-                    f='dshow',  # Usar DirectShow para captura de audio
+                    f'audio="{device_name}"',
+                    f='dshow',
                     sample_rate=16000,
-                    channels=1
+                    channels=1,
+                    audio_buffer_size=50  # Añadir buffer de audio
                 )
             
             # Configurar la salida de audio
