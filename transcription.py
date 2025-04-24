@@ -73,23 +73,28 @@ def check_ffmpeg():
 
 class RealTimeTranscriptionManager:
     def __init__(self, source_lang: str, target_lang: str):
+        self.audio_interface = None # Inicializar a None
         try:
             logger.info("Inicializando RealTimeTranscriptionManager con PyAudio...")
+            
+            # Crear PyAudio Interface primero
+            self.audio_interface = pyaudio.PyAudio()
+
+            # Cargar modelo y traductor (pueden tardar o fallar)
             self.model = whisper.load_model("base")
             self.translator = Translator()
+            
             self.source_lang = source_lang
             self.target_lang = target_lang
             
             # Configuración de PyAudio
-            self.CHUNK = 1024 * 4  # Tamaño del buffer de lectura (ajustable)
-            self.FORMAT = pyaudio.paInt16 # Formato de audio (Whisper prefiere float32, pero paInt16 es común)
+            self.CHUNK = 1024 * 4
+            self.FORMAT = pyaudio.paInt16 
             self.CHANNELS = 1
-            self.RATE = 16000 # Tasa de muestreo requerida por Whisper
-            self.RECORD_SECONDS = 5 # Procesar audio cada X segundos
+            self.RATE = 16000
+            self.RECORD_SECONDS = 5
             
-            self.audio_interface = pyaudio.PyAudio()
             self.stream = None
-            
             self.audio_queue = queue.Queue()
             self.subtitle_queue = queue.Queue()
             self.is_running = False
@@ -100,7 +105,14 @@ class RealTimeTranscriptionManager:
             
         except Exception as e:
             logger.error(f"Error al inicializar RealTimeTranscriptionManager: {e}")
-            raise
+            # Asegurarse de terminar PyAudio si se creó pero algo más falló
+            if self.audio_interface:
+                try:
+                    self.audio_interface.terminate()
+                    logger.info("Interfaz de PyAudio terminada debido a error de inicialización.")
+                except Exception as term_error:
+                     logger.error(f"Error al terminar PyAudio durante manejo de error inicial: {term_error}")
+            raise # Relanzar la excepción original
             
     def list_audio_devices(self):
         """Lista los dispositivos de entrada de audio disponibles."""
@@ -281,6 +293,10 @@ class RealTimeTranscriptionManager:
     def stop_processing(self):
         """Detiene la captura y el procesamiento."""
         logger.info("Intentando detener el procesamiento...")
+        if not self.is_running and not self.stream and not self.audio_interface:
+             logger.info("El procesamiento ya estaba detenido o no iniciado.")
+             return
+
         self.is_running = False # Señal para que los hilos terminen
         
         # Detener y cerrar el stream de PyAudio
@@ -295,7 +311,30 @@ class RealTimeTranscriptionManager:
             finally:
                  self.stream = None
 
-        # Terminar la interfaz de PyAudio
+        # Esperar a que los hilos terminen (con timeouts)
+        if self.audio_thread and self.audio_thread.is_alive():
+            logger.info("Esperando finalización del hilo de lectura de audio...")
+            self.audio_thread.join(timeout=1) # Reducir timeout si es necesario
+            if self.audio_thread.is_alive():
+                 logger.warning("El hilo de lectura de audio no finalizó a tiempo.")
+        
+        if self.processing_thread and self.processing_thread.is_alive():
+            logger.info("Esperando finalización del hilo de procesamiento de audio...")
+            # Poner algo en la cola puede ayudar si está bloqueado en get(timeout=1)
+            self.audio_queue.put(b'') # Enviar bytes vacíos podría funcionar
+            self.processing_thread.join(timeout=3) # Ajustar timeout
+            if self.processing_thread.is_alive():
+                 logger.warning("El hilo de procesamiento de audio no finalizó a tiempo.")
+
+        # Limpiar colas después de que los hilos (supuestamente) han terminado
+        while not self.audio_queue.empty():
+            try: self.audio_queue.get_nowait()
+            except queue.Empty: break
+        while not self.subtitle_queue.empty():
+            try: self.subtitle_queue.get_nowait()
+            except queue.Empty: break
+            
+        # Terminar la interfaz de PyAudio (IMPORTANTE: hacerlo al final)
         if self.audio_interface:
             try:
                 self.audio_interface.terminate()
@@ -303,32 +342,12 @@ class RealTimeTranscriptionManager:
             except Exception as e:
                  logger.error(f"Error al terminar la interfaz de PyAudio: {e}")
             finally:
-                self.audio_interface = None
-        
-        # Esperar a que los hilos terminen
-        if self.audio_thread and self.audio_thread.is_alive():
-            logger.info("Esperando finalización del hilo de lectura de audio...")
-            self.audio_thread.join(timeout=2)
-            if self.audio_thread.is_alive():
-                 logger.warning("El hilo de lectura de audio no finalizó a tiempo.")
-        
-        if self.processing_thread and self.processing_thread.is_alive():
-            logger.info("Esperando finalización del hilo de procesamiento de audio...")
-            # Poner un elemento None en la cola podría ayudar a desbloquear el hilo si está esperando en get()
-            # self.audio_queue.put(None) # Descomentar si se usa get() sin timeout y parece bloquearse
-            self.processing_thread.join(timeout=5) # Dar más tiempo al procesamiento
-            if self.processing_thread.is_alive():
-                 logger.warning("El hilo de procesamiento de audio no finalizó a tiempo.")
+                self.audio_interface = None # Marcar como terminado
 
-        # Limpiar colas por si acaso
-        while not self.audio_queue.empty():
-            try: self.audio_queue.get_nowait()
-            except queue.Empty: break
-        while not self.subtitle_queue.empty():
-            try: self.subtitle_queue.get_nowait()
-            except queue.Empty: break
-
-        logger.info("Procesamiento detenido.")
+        logger.info("Procesamiento detenido y recursos liberados.")
+        # Resetear hilos por si se reinicia
+        self.audio_thread = None
+        self.processing_thread = None
 
 
     def get_subtitles(self) -> List[Dict]:
