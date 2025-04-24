@@ -178,7 +178,11 @@ def main():
         st.session_state.rt_manager = None
     if 'is_processing' not in st.session_state:
         st.session_state.is_processing = False
-    
+    if 'audio_devices' not in st.session_state:
+         st.session_state.audio_devices = []
+    if 'selected_device_index' not in st.session_state:
+         st.session_state.selected_device_index = None
+
     try:
         # Opciones de idioma (mover al principio)
         st.header("Configuración de Idiomas")
@@ -221,28 +225,118 @@ def main():
                     video_path = download_youtube_video(youtube_url)
                     if video_path:
                         st.video(video_path)
-        else:  # Tiempo real
+        elif input_type == "Tiempo real": # Tiempo real
             st.write("""
-            En modo tiempo real, SubStudy procesará el audio en directo y generará subtítulos en tiempo real.
-            Asegúrate de tener un micrófono conectado y configurado correctamente.
+            En modo tiempo real, SubStudy procesará el audio de tu micrófono y generará subtítulos.
+            Asegúrate de tener un micrófono conectado y configurado. Selecciona el dispositivo deseado.
             """)
-            
-            if st.button("Iniciar Captura de Audio"):
-                if not st.session_state.is_processing:
-                    st.session_state.is_processing = True
-                    st.session_state.rt_manager = RealTimeTranscriptionManager(
-                        source_language, target_language
-                    )
-                    st.session_state.rt_manager.start_processing()
-                    st.success("Captura de audio iniciada")
-            
-            if st.button("Detener Captura de Audio"):
-                if st.session_state.is_processing:
-                    st.session_state.is_processing = False
-                    if st.session_state.rt_manager:
-                        st.session_state.rt_manager.stop_processing()
-                    st.success("Captura de audio detenida")
-        
+
+            # Inicializar y listar dispositivos de audio (solo una vez o si es necesario)
+            if not st.session_state.audio_devices:
+                 try:
+                      # Crear instancia temporal solo para listar dispositivos
+                      temp_pyaudio = pyaudio.PyAudio()
+                      devices = []
+                      info = temp_pyaudio.get_host_api_info_by_index(0)
+                      numdevices = info.get('deviceCount')
+                      for i in range(0, numdevices):
+                           device_info = temp_pyaudio.get_device_info_by_host_api_device_index(0, i)
+                           if device_info.get('maxInputChannels') > 0:
+                                devices.append({"index": i, "name": f"({i}) {device_info.get('name')}"})
+                      temp_pyaudio.terminate()
+                      st.session_state.audio_devices = devices
+                      # Seleccionar por defecto si es posible
+                      if not st.session_state.selected_device_index and devices:
+                           try:
+                                temp_pyaudio = pyaudio.PyAudio()
+                                default_info = temp_pyaudio.get_default_input_device_info()
+                                st.session_state.selected_device_index = default_info['index']
+                                temp_pyaudio.terminate()
+                           except Exception:
+                                st.session_state.selected_device_index = devices[0]['index'] # Seleccionar el primero si falla el default
+                 except Exception as e:
+                      st.error(f"No se pudieron listar los dispositivos de audio: {e}")
+                      st.session_state.audio_devices = []
+
+            # Selector de dispositivo de audio
+            if st.session_state.audio_devices:
+                 device_options = {d['name']: d['index'] for d in st.session_state.audio_devices}
+                 # Encontrar el nombre correspondiente al índice seleccionado
+                 selected_name = next((name for name, index in device_options.items() if index == st.session_state.selected_device_index), list(device_options.keys())[0])
+
+                 selected_device_name = st.selectbox(
+                      "Selecciona el dispositivo de entrada de audio:",
+                      options=device_options.keys(),
+                      index=list(device_options.keys()).index(selected_name) # Establecer el índice del selectbox
+                 )
+                 # Actualizar el índice seleccionado en el estado de sesión
+                 st.session_state.selected_device_index = device_options[selected_device_name]
+            else:
+                 st.warning("No se encontraron dispositivos de entrada de audio.")
+
+            col_start, col_stop = st.columns(2)
+            with col_start:
+                if st.button("Iniciar Captura de Audio", disabled=st.session_state.is_processing or not st.session_state.audio_devices):
+                    if not st.session_state.is_processing:
+                         if st.session_state.selected_device_index is not None:
+                              st.session_state.is_processing = True
+                              st.session_state.rt_manager = RealTimeTranscriptionManager(
+                                   source_language, target_language
+                              )
+                              try:
+                                   # Pasar el índice del dispositivo seleccionado
+                                   st.session_state.rt_manager.start_processing(input_device_index=st.session_state.selected_device_index)
+                                   st.success(f"Captura de audio iniciada desde el dispositivo {st.session_state.selected_device_index}.")
+                                   st.rerun() # Forzar actualización de la UI
+                              except Exception as e:
+                                   st.error(f"Error al iniciar la captura: {e}")
+                                   st.session_state.is_processing = False
+                                   st.session_state.rt_manager = None
+                         else:
+                              st.error("Por favor, selecciona un dispositivo de audio válido.")
+
+            with col_stop:
+                if st.button("Detener Captura de Audio", disabled=not st.session_state.is_processing):
+                    if st.session_state.is_processing:
+                        st.session_state.is_processing = False
+                        if st.session_state.rt_manager:
+                            st.session_state.rt_manager.stop_processing()
+                            st.session_state.rt_manager = None # Limpiar el manager
+                        st.success("Captura de audio detenida.")
+                        st.rerun() # Forzar actualización de la UI
+
+            # Mostrar subtítulos en tiempo real si está procesando
+            if st.session_state.is_processing and st.session_state.rt_manager:
+                # Placeholder para mostrar subtítulos (podría necesitar refresco automático)
+                subtitle_placeholder = st.empty()
+
+                # Bucle para actualizar subtítulos (puede necesitar optimización en Streamlit)
+                while st.session_state.is_processing:
+                     subtitles = st.session_state.rt_manager.get_subtitles()
+                     if subtitles:
+                          # Aquí podrías acumular subtítulos o solo mostrar los últimos
+                          # El HTML actual se recrea cada vez, lo que puede ser ineficiente
+                          # Considera mostrar solo texto o usar una estructura diferente
+                          
+                          # Ejemplo: Mostrar solo texto de los últimos subtítulos
+                          text_display = ""
+                          for sub in reversed(subtitles[-5:]): # Mostrar los últimos 5
+                               text_display += f"**{sub['text']}** ({sub['translation']})\n"
+                          
+                          with subtitle_placeholder.container():
+                              st.markdown("### Subtítulos Recientes:")
+                              st.markdown(text_display)
+                              
+                          # Crear y mostrar el HTML con los subtítulos (si prefieres el formato original)
+                          # subtitle_html = create_subtitle_html(subtitles, source_language, target_language)
+                          # subtitle_placeholder.components.v1.html(subtitle_html, height=200) # Altura ajustada
+
+                     # Esperar un poco antes de volver a verificar
+                     time.sleep(0.5) # Ajusta este valor según sea necesario
+
+                # Limpiar el placeholder cuando se detiene
+                subtitle_placeholder.empty()
+
         if input_type != "Tiempo real" and video_path:
             if st.button("Generar Subtítulos"):
                 with st.spinner("Procesando video..."):
@@ -274,17 +368,14 @@ def main():
                             except Exception as e:
                                 logger.error(f"Error al limpiar archivos temporales: {e}")
         
-        elif input_type == "Tiempo real" and st.session_state.is_processing:
-            # Mostrar subtítulos en tiempo real
-            if st.session_state.rt_manager:
-                subtitles = st.session_state.rt_manager.get_subtitles()
-                if subtitles:
-                    subtitle_html = create_subtitle_html(subtitles, source_language, target_language)
-                    st.components.v1.html(subtitle_html, height=600)
-    
     except Exception as e:
         logger.error(f"Error general en la aplicación: {e}")
         st.error(f"Ha ocurrido un error: {str(e)}")
+        # Detener procesamiento si hay un error general y estaba activo
+        if st.session_state.is_processing and st.session_state.rt_manager:
+             st.session_state.rt_manager.stop_processing()
+             st.session_state.is_processing = False
+             st.session_state.rt_manager = None
 
 if __name__ == "__main__":
     main()
