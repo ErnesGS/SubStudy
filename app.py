@@ -4,8 +4,8 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QComboBox, QSpacerItem, QSizePolicy, QFrame
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, Slot, QEvent
-from PySide6.QtGui import QMouseEvent, QPalette, QColor
+from PySide6.QtCore import Qt, QTimer, QPoint, Slot, QEvent, Signal
+from PySide6.QtGui import QMouseEvent, QPalette, QColor, QFontMetrics
 
 # Asegúrate de que transcription.py esté accesible
 try:
@@ -18,32 +18,82 @@ import logging # Usar el mismo logger si se desea
 
 logger = logging.getLogger(__name__)
 
-# Clase QLabel Personalizada para detectar Hover fácilmente
+# Clase QLabel Personalizada para detectar Hover y emitir señal
 class HoverLabel(QLabel):
+    # Definir la señal (fuera de __init__)
+    hoverChanged = Signal(bool) 
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setMouseTracking(True) # Necesario para recibir eventos move sin presionar botón
+        self.setMouseTracking(True)
         self._hovering = False
 
     def enterEvent(self, event: QEvent):
         if not self._hovering:
             logger.debug("HoverLabel: Enter")
             self._hovering = True
-            # Aquí podríamos emitir una señal si quisiéramos desacoplar más
-            # Por ahora, podemos llamar a un método del padre directamente si es simple
-            if hasattr(self.parentWidget(), 'show_translation'):
-                 self.parentWidget().show_translation(True)
+            # Emitir señal indicando que el hover ha comenzado
+            self.hoverChanged.emit(True) 
         super().enterEvent(event)
 
     def leaveEvent(self, event: QEvent):
         if self._hovering:
             logger.debug("HoverLabel: Leave")
             self._hovering = False
-            if hasattr(self.parentWidget(), 'show_translation'):
-                 self.parentWidget().show_translation(False)
+            # Emitir señal indicando que el hover ha terminado
+            self.hoverChanged.emit(False) 
         super().leaveEvent(event)
 
+# --- NUEVA CLASE PARA EL POPUP DE TRADUCCIÓN ---
+class TranslationPopup(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Flags: Tooltip (ayuda a auto-ocultarse), sin bordes, siempre encima
+        self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground) # Fondo transparente para la ventana
+        self.setAttribute(Qt.WA_DeleteOnClose) # Borrar al cerrar (aunque la ocultaremos)
 
+        # Layout y Etiqueta interna
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0) # Sin márgenes para el layout
+
+        # Frame interno para el fondo coloreado y bordes redondeados
+        self.frame = QFrame(self)
+        self.frame.setStyleSheet("""
+            QFrame {
+                background-color: rgba(40, 40, 40, 0.9); /* Fondo oscuro semitransparente */
+                border-radius: 5px;
+                padding: 5px 8px; /* Padding interno */
+            }
+        """)
+        frame_layout = QVBoxLayout(self.frame)
+        frame_layout.setContentsMargins(0,0,0,0)
+
+        self.label = QLabel("Translation", self.frame) # Padre es el frame
+        self.label.setStyleSheet("color: #dddddd; font-size: 12pt; background-color: transparent;") # Texto claro
+        self.label.setWordWrap(True)
+        
+        frame_layout.addWidget(self.label) # Añadir label al layout del frame
+        layout.addWidget(self.frame) # Añadir frame al layout principal del popup
+        self.setLayout(layout)
+
+    def setText(self, text):
+        self.label.setText(text)
+        # Ajustar tamaño del popup al contenido (con un ancho máximo)
+        self.adjustSize() 
+        # Opcional: limitar ancho máximo
+        # fm = QFontMetrics(self.label.font())
+        # width = fm.boundingRect(self.label.text()).width() + 30 # Añadir padding
+        # self.setFixedWidth(min(width, 400)) # Máximo 400px de ancho
+        # self.adjustSize()
+
+
+    def showAt(self, position: QPoint):
+        """Mueve el popup a la posición global y lo muestra."""
+        self.move(position)
+        self.show()
+
+# Clase Principal Modificada
 class SubtitleOverlayWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -52,6 +102,9 @@ class SubtitleOverlayWindow(QWidget):
         self._offset = None # Para arrastrar la ventana
         self.current_original = "" # Almacenar texto actual
         self.current_translation = "" # Almacenar traducción actual
+        
+        # --- Crear instancia del Popup ---
+        self.translation_popup = TranslationPopup() 
 
         self.init_ui()
         self.populate_audio_devices()
@@ -59,7 +112,7 @@ class SubtitleOverlayWindow(QWidget):
         # Timer para actualizar subtítulos
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.update_subtitles_display)
-        self.update_interval_ms = 300 # Milisegundos (ajustable)
+        self.update_interval_ms = 150 # Reducido desde 300 
 
     def init_ui(self):
         self.setWindowTitle("SubStudy Overlay")
@@ -138,18 +191,12 @@ class SubtitleOverlayWindow(QWidget):
         self.original_label.setStyleSheet("font-size: 16pt; font-weight: bold; padding-bottom: 0px;") # Negrita y sin padding inferior
         self.original_label.setMinimumHeight(40) # Ajustar altura mínima
 
-        # Etiqueta para Traducción (inicialmente oculta)
-        self.translation_label = QLabel(self.content_frame) # Padre es el frame
-        self.translation_label.setText("")
-        self.translation_label.setAlignment(Qt.AlignCenter)
-        self.translation_label.setWordWrap(True)
-        self.translation_label.setStyleSheet("font-size: 14pt; font-style: italic; color: #cccccc; padding-top: 0px;") # Gris claro, cursiva
-        self.translation_label.setVisible(False) # Oculta por defecto
-        self.translation_label.setMinimumHeight(35) # Altura mínima
+        # --- CONECTAR LA SEÑAL AL SLOT ---
+        # Conectar la señal hoverChanged de la etiqueta original al slot show_translation
+        self.original_label.hoverChanged.connect(self.show_translation_popup)
 
         # Añadir etiquetas al layout de subtítulos
         subtitles_layout.addWidget(self.original_label)
-        subtitles_layout.addWidget(self.translation_label)
 
         # Añadir layout de subtítulos al layout del frame
         frame_layout.addLayout(controls_layout)
@@ -253,8 +300,6 @@ class SubtitleOverlayWindow(QWidget):
         self.audio_device_combo.setEnabled(True)
         # Limpiar etiquetas y estado hover
         self.original_label.setText("...")
-        self.translation_label.setText("")
-        self.translation_label.setVisible(False)
         self.current_original = ""
         self.current_translation = ""
         logger.info("Captura detenida.")
@@ -273,16 +318,10 @@ class SubtitleOverlayWindow(QWidget):
                     # Actualizar texto original (visible siempre)
                     self.original_label.setText(self.current_original)
                     
-                    # Actualizar texto de traducción (aunque esté oculta)
-                    self.translation_label.setText(f"({self.current_translation})")
-
-                    # Si el ratón está AHORA MISMO sobre la etiqueta original,
-                    # asegurarse de que la traducción sea visible.
-                    # Esto maneja el caso donde llega un nuevo subtítulo MIENTRAS se hace hover.
-                    if self.original_label._hovering:
-                         self.translation_label.setVisible(True)
-                    else:
-                         self.translation_label.setVisible(False)
+                    # Si el popup está visible MIENTRAS llega un nuevo subtítulo,
+                    # actualizamos su texto.
+                    if self.translation_popup.isVisible():
+                         self.translation_popup.setText(f"({self.current_translation})")
 
             except Exception as e:
                 logger.error(f"Error al obtener/mostrar subtítulos: {e}")
@@ -338,22 +377,37 @@ class SubtitleOverlayWindow(QWidget):
                  self.audio_interface = None
         event.accept() # Aceptar el cierre
 
-    # Método llamado por HoverLabel para mostrar/ocultar traducción
-    # Debe estar en el widget padre de HoverLabel (content_frame)
-    # o delegar desde el padre si HoverLabel estuviera más anidado.
-    # Aquí, como el padre es self.content_frame, y este método está en SubtitleOverlayWindow
-    # necesitamos una referencia o hacer este método accesible.
-    # La forma más simple ahora es ponerlo aquí y que HoverLabel llame a parentWidget().show_translation()
-    @Slot(bool) # Para indicar que recibe un booleano
-    def show_translation(self, show: bool):
-        """Muestra u oculta la etiqueta de traducción."""
-        logger.debug(f"show_translation llamado con: {show}")
-        if self.translation_label: # Asegurarse de que existe
-             # Solo mostrar si hay texto de traducción
-            if show and self.current_translation:
-                 self.translation_label.setVisible(True)
-            else:
-                 self.translation_label.setVisible(False)
+    # --- SLOT para mostrar/ocultar el POPUP ---
+    @Slot(bool) 
+    def show_translation_popup(self, show: bool):
+        """Muestra u oculta el popup de traducción."""
+        logger.debug(f"Slot show_translation_popup llamado con: {show}")
+        
+        if show and self.current_translation:
+            # Actualizar texto del popup
+            self.translation_popup.setText(f"({self.current_translation})")
+            
+            # Calcular posición: Encima de la etiqueta original
+            label_pos = self.original_label.mapToGlobal(QPoint(0, 0))
+            popup_height = self.translation_popup.height()
+            label_width = self.original_label.width()
+            popup_width = self.translation_popup.width()
+            
+            # Centrar popup horizontalmente sobre la etiqueta original
+            popup_x = label_pos.x() + (label_width - popup_width) // 2
+            # Posicionar popup justo encima de la etiqueta original
+            popup_y = label_pos.y() - popup_height - 5 # 5px de margen superior
+            
+            # Asegurarse de que no se salga por arriba de la pantalla
+            if popup_y < 0: 
+                # Si no cabe arriba, intentar ponerlo debajo (opcional)
+                popup_y = label_pos.y() + self.original_label.height() + 5 
+            
+            # Mover y mostrar el popup
+            self.translation_popup.showAt(QPoint(popup_x, popup_y))
+        else:
+            # Ocultar el popup
+            self.translation_popup.hide()
 
 # --- Punto de Entrada ---
 if __name__ == "__main__":

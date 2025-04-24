@@ -92,7 +92,7 @@ class RealTimeTranscriptionManager:
             self.FORMAT = pyaudio.paInt16 
             self.CHANNELS = 1
             self.RATE = 16000
-            self.RECORD_SECONDS = 5
+            self.RECORD_SECONDS = 2
             
             self.stream = None
             self.audio_queue = queue.Queue()
