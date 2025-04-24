@@ -17,3 +17,7 @@ requests>=2.25.1 # Para AnkiConnect
 
 # Opcional (si TranscriptionManager se usa para procesar archivos de video/audio)
 # pydub>=0.25.1 
+
+# Text Comparison
+fuzzywuzzy>=0.18.0
+python-levenshtein>=0.12.2 # Recomendado para velocidad con fuzzywuzzy 

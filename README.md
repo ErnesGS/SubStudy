@@ -52,3 +52,4 @@ Para utilizar la aplicación:
 - Clona el repositorio en tu equipo.
 - **Instala las dependencias**: pip install -r requirements.txt
 - **Ejecuta la aplicación**: python app.py
+- **Generar tarjetas en Anki**: debes tener abierta la aplicación de anki y tener instalado el complemento de Ankiconect

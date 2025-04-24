@@ -417,12 +417,11 @@ class SubtitleOverlayWindow(QWidget):
         logger.info("Aceptando evento de cierre...")
         event.accept() # Aceptar el cierre de la ventana
 
-        # --- OPCIONAL (si la ventana cierra pero la app no termina): ---
-        # Descomentar la siguiente línea para forzar la salida del bucle de eventos principal.
-        # A veces es necesario si quedan hilos no demonio o referencias activas.
-        # logger.info("Forzando salida de la aplicación.")
-        # QApplication.instance().quit() 
-        # --------------------------------------------------------------
+        # --- DESCOMENTAR ESTA LÍNEA ---
+        # Forzar la salida del bucle de eventos principal de Qt.
+        logger.info("Forzando salida de la aplicación Qt.")
+        QApplication.instance().quit() 
+        # -----------------------------
 
     # --- SLOT para mostrar/ocultar el POPUP ---
     @Slot(bool) 
@@ -556,10 +555,10 @@ class SubtitleOverlayWindow(QWidget):
 if __name__ == "__main__":
     # Configurar logging si es necesario
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
     app = QApplication(sys.argv)
-    
     window = SubtitleOverlayWindow()
     window.show()
-    
-    sys.exit(app.exec())
+    # app.exec() devolverá un código de salida cuando quit() sea llamado
+    exit_code = app.exec() 
+    logger.info(f"Saliendo de la aplicación con código: {exit_code}")
+    sys.exit(exit_code)
