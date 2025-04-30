@@ -46,8 +46,36 @@ class HoverLabel(QLabel):
             self.hoverChanged.emit(False) 
         super().leaveEvent(event)
 
+class SubtitleLineLabel(QLabel):
+    hovered = Signal(object)  # Emite el subtítulo (dict) al hacer hover
+    rightClicked = Signal(object)  # Emite el subtítulo (dict) al click derecho
+    unhovered = Signal()  # NUEVO: señal para cuando el ratón sale
+
+    def __init__(self, subtitle, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.subtitle = subtitle
+        self.setMouseTracking(True)
+        self.setText(subtitle["text"])
+        self.setStyleSheet("font-size:16pt;font-weight:bold;color:white;")
+        self.setAlignment(Qt.AlignCenter)
+
+    def enterEvent(self, event):
+        self.hovered.emit(self.subtitle)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.unhovered.emit()  # NUEVO: emitir señal al salir
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.rightClicked.emit(self.subtitle)
+        super().mousePressEvent(event)
+
 # --- NUEVA CLASE PARA EL POPUP DE TRADUCCIÓN ---
 class TranslationPopup(QWidget):
+    addToAnkiClicked = Signal(object)  # Emite el subtítulo (dict) al pulsar el botón
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Flags: Tooltip (ayuda a auto-ocultarse), sin bordes, siempre encima
@@ -76,24 +104,26 @@ class TranslationPopup(QWidget):
         self.label.setWordWrap(True)
         
         frame_layout.addWidget(self.label) # Añadir label al layout del frame
-        layout.addWidget(self.frame) # Añadir frame al layout principal del popup
-        self.setLayout(layout)
+        self.anki_button = QPushButton("Añadir a Anki", self.frame)
+        self.anki_button.setStyleSheet("background-color: #40b040; color: white; border-radius: 4px;")
+        self.anki_button.clicked.connect(self._emit_add_to_anki)
+        frame_layout.addWidget(self.anki_button)
+        layout.addWidget(self.frame)
+        self.current_subtitle = None
 
-    def setText(self, text):
-        self.label.setText(text)
-        # Ajustar tamaño del popup al contenido (con un ancho máximo)
-        self.adjustSize() 
-        # Opcional: limitar ancho máximo
-        # fm = QFontMetrics(self.label.font())
-        # width = fm.boundingRect(self.label.text()).width() + 30 # Añadir padding
-        # self.setFixedWidth(min(width, 400)) # Máximo 400px de ancho
-        # self.adjustSize()
-
+    def setSubtitle(self, subtitle):
+        self.current_subtitle = subtitle
+        self.label.setText(f'({subtitle["translation"]})')
+        self.adjustSize()
 
     def showAt(self, position: QPoint):
         """Mueve el popup a la posición global y lo muestra."""
         self.move(position)
         self.show()
+
+    def _emit_add_to_anki(self):
+        if self.current_subtitle:
+            self.addToAnkiClicked.emit(self.current_subtitle)
 
 # Clase Principal Modificada
 class SubtitleOverlayWindow(QWidget):
@@ -103,6 +133,8 @@ class SubtitleOverlayWindow(QWidget):
     ANKI_MODEL_NAME = "Básico" # Modelo de nota básico
     ANKI_FRONT_FIELD = "Anverso" # Campo para el texto original
     ANKI_BACK_FIELD = "Reverso"   # Campo para la traducción
+    SUBTITLE_DURATION = 4  # segundos que permanece cada subtítulo
+    MAX_SUBTITLES = 5      # máximo de subtítulos en pantalla
 
     def __init__(self):
         super().__init__()
@@ -114,6 +146,9 @@ class SubtitleOverlayWindow(QWidget):
         
         # --- Crear instancia del Popup ---
         self.translation_popup = TranslationPopup() 
+        self.active_subtitles = []  # Lista de dicts: {"text", "translation", "timestamp"}
+        self.subtitle_labels = []  # NUEVO: lista de labels de línea
+        self.translation_popup.addToAnkiClicked.connect(self.add_subtitle_to_anki)
 
         self.init_ui()
         self.populate_audio_devices()
@@ -150,20 +185,20 @@ class SubtitleOverlayWindow(QWidget):
                 padding: 2px 5px; /* Añadir padding pequeño */
             }
         """)
-        frame_layout = QVBoxLayout(self.content_frame)
-        frame_layout.setContentsMargins(15, 10, 15, 10) # Márgenes internos
+        self.frame_layout = QVBoxLayout(self.content_frame)
+        self.frame_layout.setContentsMargins(15, 10, 15, 10) # Márgenes internos
 
         # --- Controles (dentro del frame) ---
         controls_layout = QHBoxLayout()
         
         # Idiomas
         self.source_lang_combo = QComboBox()
-        self.source_lang_combo.addItems(["auto", "en", "es", "fr", "de", "it", "pt"])
+        self.source_lang_combo.addItems(["es", "en", "pt", "fr", "de", "it", "auto"])
         self.source_lang_combo.setToolTip("Idioma del audio original")
 
         self.target_lang_combo = QComboBox()
         self.target_lang_combo.addItems(["es", "en", "fr", "de", "it", "pt"])
-        self.target_lang_combo.setCurrentText("en") # Predeterminado
+        self.target_lang_combo.setCurrentText("es") # Predeterminado
         self.target_lang_combo.setToolTip("Idioma al que traducir")
         
         # Dispositivo de Audio
@@ -204,28 +239,16 @@ class SubtitleOverlayWindow(QWidget):
         controls_layout.addWidget(self.close_button) # Añadir botón Cerrar
 
         # --- Layout para Subtítulos (Original y Traducción) ---
-        subtitles_layout = QVBoxLayout()
-        subtitles_layout.setSpacing(0) # Sin espacio entre original y traducción
+        self.subtitles_layout = QVBoxLayout()
+        self.subtitles_layout.setSpacing(0) # Sin espacio entre original y traducción
 
         # Etiqueta para Texto Original (ahora es HoverLabel)
         # Pasamos self.content_frame como padre para que HoverLabel pueda llamar a show_translation
-        self.original_label = HoverLabel(self.content_frame)
-        self.original_label.setText("...")
-        self.original_label.setAlignment(Qt.AlignCenter)
-        self.original_label.setWordWrap(True)
-        self.original_label.setStyleSheet("font-size: 16pt; font-weight: bold; padding-bottom: 0px;") # Negrita y sin padding inferior
-        self.original_label.setMinimumHeight(40) # Ajustar altura mínima
-
-        # --- CONECTAR LA SEÑAL AL SLOT ---
-        # Conectar la señal hoverChanged de la etiqueta original al slot show_translation
-        self.original_label.hoverChanged.connect(self.show_translation_popup)
+        self.original_label = None  # Ya no se usa como antes
 
         # Añadir etiquetas al layout de subtítulos
-        subtitles_layout.addWidget(self.original_label)
-
-        # Añadir layout de subtítulos al layout del frame
-        frame_layout.addLayout(controls_layout)
-        frame_layout.addLayout(subtitles_layout)
+        self.frame_layout.addLayout(controls_layout)
+        self.frame_layout.addLayout(self.subtitles_layout)
         
         main_layout.addWidget(self.content_frame) # Añadir el frame al layout principal
         self.setLayout(main_layout)
@@ -268,13 +291,13 @@ class SubtitleOverlayWindow(QWidget):
         device_index = self.audio_device_combo.currentData() # Obtener índice desde userData
 
         if device_index is None:
-            self.original_label.setText("Error: ¡Selecciona un dispositivo de audio!")
+            self.show_status_message("Error: ¡Selecciona un dispositivo de audio!", color="red")
             logger.error("No se seleccionó un dispositivo de audio.")
             return
 
         try:
             logger.info(f"Iniciando captura: Src={source_lang}, Tgt={target_lang}, Device={device_index}")
-            self.original_label.setText("Iniciando...")
+            self.show_status_message("Iniciando...", color="orange")
             QApplication.processEvents() # Forzar actualización de la etiqueta
 
             # Crear e iniciar el manager
@@ -292,12 +315,12 @@ class SubtitleOverlayWindow(QWidget):
             self.source_lang_combo.setEnabled(False)
             self.target_lang_combo.setEnabled(False)
             self.audio_device_combo.setEnabled(False)
-            self.original_label.setText("Escuchando...")
+            self.show_status_message("Escuchando...", color="green")
             logger.info("Captura iniciada y timer activado.")
 
         except Exception as e:
             logger.error(f"Error al iniciar RealTimeTranscriptionManager: {e}")
-            self.original_label.setText(f"Error al iniciar: {e}")
+            self.show_status_message(f"Error al iniciar: {e}", color="red")
             self.rt_manager = None # Asegurarse de que está None si falla
             # Restaurar estado botones si falla
             self.start_button.setEnabled(True)
@@ -329,37 +352,84 @@ class SubtitleOverlayWindow(QWidget):
         self.target_lang_combo.setEnabled(True)
         self.audio_device_combo.setEnabled(True)
         # Limpiar etiquetas y estado hover
-        self.original_label.setText("...")
+        self.show_status_message("...")
         self.current_original = ""
         self.current_translation = ""
         logger.info("Captura detenida.")
 
     @Slot()
     def update_subtitles_display(self):
+        import time
+        now = time.time()
+        # Eliminar subtítulos antiguos
+        self.active_subtitles = [
+            s for s in self.active_subtitles
+            if now - s["timestamp"] < self.SUBTITLE_DURATION
+        ]
+        # Añadir nuevo subtítulo si hay uno nuevo
         if self.rt_manager and self.rt_manager.is_running:
             try:
-                subtitles = self.rt_manager.get_subtitles() # Obtener todos los nuevos
-                if subtitles:
-                    # Mostrar el último subtítulo recibido
-                    last_sub = subtitles[-1] 
-                    self.current_original = last_sub['text']
-                    self.current_translation = last_sub['translation']
-                    
-                    # Actualizar texto original (visible siempre)
-                    self.original_label.setText(self.current_original)
-                    
-                    # Si el popup está visible MIENTRAS llega un nuevo subtítulo,
-                    # actualizamos su texto.
-                    if self.translation_popup.isVisible():
-                         self.translation_popup.setText(f"({self.current_translation})")
-
-                    # --- Habilitar botón Anki si hay texto ---
-                    self.anki_button.setEnabled(bool(self.current_original)) 
-
+                subtitles = self.rt_manager.get_subtitles()
+                for sub in subtitles:
+                    # Evitar duplicados exactos consecutivos
+                    if not self.active_subtitles or sub['text'] != self.active_subtitles[-1]['text']:
+                        self.active_subtitles.append({
+                            "text": sub['text'],
+                            "translation": sub['translation'],
+                            "timestamp": now
+                        })
+                # Limitar el número de subtítulos activos
+                if len(self.active_subtitles) > self.MAX_SUBTITLES:
+                    self.active_subtitles = self.active_subtitles[-self.MAX_SUBTITLES:]
             except Exception as e:
                 logger.error(f"Error al obtener/mostrar subtítulos: {e}")
-                # Podrías mostrar el error en la etiqueta o simplemente registrarlo
-                # self.original_label.setText(f"Error display: {e}")
+
+        # --- ACTUALIZAR SUBTÍTULOS EN PANTALLA ---
+        # Eliminar labels antiguos
+        for label in self.subtitle_labels:
+            label.deleteLater()
+        self.subtitle_labels = []
+
+        # Añadir nuevos labels
+        for s in self.active_subtitles:
+            label = SubtitleLineLabel(s, self.content_frame)
+            label.hovered.connect(self.show_translation_popup_for_line)
+            label.rightClicked.connect(self.show_popup_and_add_to_anki)
+            label.unhovered.connect(self.hide_translation_popup)  # NUEVO: conectar señal
+            self.subtitles_layout.addWidget(label)
+            self.subtitle_labels.append(label)
+
+    @Slot(object)
+    def show_translation_popup_for_line(self, subtitle):
+        # Mostrar el popup encima de la línea correspondiente
+        sender = self.sender()
+        if isinstance(sender, SubtitleLineLabel):
+            self.translation_popup.setSubtitle(subtitle)
+            label_pos = sender.mapToGlobal(QPoint(0, 0))
+            popup_height = self.translation_popup.height()
+            label_width = sender.width()
+            popup_width = self.translation_popup.width()
+            popup_x = label_pos.x() + (label_width - popup_width) // 2
+            popup_y = label_pos.y() - popup_height - 5
+            if popup_y < 0:
+                popup_y = label_pos.y() + sender.height() + 5
+            self.translation_popup.showAt(QPoint(popup_x, popup_y))
+        else:
+            self.translation_popup.hide()
+
+    @Slot(object)
+    def show_popup_and_add_to_anki(self, subtitle):
+        # Enviar directamente a Anki al hacer click derecho
+        self.add_subtitle_to_anki(subtitle)
+        # (Opcional) Mostrar el popup también:
+        self.show_translation_popup_for_line(subtitle)
+
+    @Slot(object)
+    def add_subtitle_to_anki(self, subtitle):
+        # Lógica para añadir a Anki usando los datos del subtítulo
+        self.current_original = subtitle["text"]
+        self.current_translation = subtitle["translation"]
+        self.send_to_anki()
 
     # --- Métodos para arrastrar la ventana (MODIFICADOS) ---
     def mousePressEvent(self, event: QMouseEvent):
@@ -422,38 +492,6 @@ class SubtitleOverlayWindow(QWidget):
         logger.info("Forzando salida de la aplicación Qt.")
         QApplication.instance().quit() 
         # -----------------------------
-
-    # --- SLOT para mostrar/ocultar el POPUP ---
-    @Slot(bool) 
-    def show_translation_popup(self, show: bool):
-        """Muestra u oculta el popup de traducción."""
-        logger.debug(f"Slot show_translation_popup llamado con: {show}")
-        
-        if show and self.current_translation:
-            # Actualizar texto del popup
-            self.translation_popup.setText(f"({self.current_translation})")
-            
-            # Calcular posición: Encima de la etiqueta original
-            label_pos = self.original_label.mapToGlobal(QPoint(0, 0))
-            popup_height = self.translation_popup.height()
-            label_width = self.original_label.width()
-            popup_width = self.translation_popup.width()
-            
-            # Centrar popup horizontalmente sobre la etiqueta original
-            popup_x = label_pos.x() + (label_width - popup_width) // 2
-            # Posicionar popup justo encima de la etiqueta original
-            popup_y = label_pos.y() - popup_height - 5 # 5px de margen superior
-            
-            # Asegurarse de que no se salga por arriba de la pantalla
-            if popup_y < 0: 
-                # Si no cabe arriba, intentar ponerlo debajo (opcional)
-                popup_y = label_pos.y() + self.original_label.height() + 5 
-            
-            # Mover y mostrar el popup
-            self.translation_popup.showAt(QPoint(popup_x, popup_y))
-        else:
-            # Ocultar el popup
-            self.translation_popup.hide()
 
     # --- NUEVO SLOT PARA ENVIAR A ANKI ---
     @Slot()
@@ -550,6 +588,22 @@ class SubtitleOverlayWindow(QWidget):
             self.anki_button.setStyleSheet(original_stylesheet)
             # Volver a habilitar solo si hay texto actual
             self.anki_button.setEnabled(bool(self.current_original) and self.stop_button.isEnabled())
+
+    def show_status_message(self, message, color="orange"):
+        # Elimina labels antiguos
+        for label in self.subtitle_labels:
+            label.deleteLater()
+        self.subtitle_labels = []
+        # Crea un label temporal para el mensaje
+        label = QLabel(message, self.content_frame)
+        label.setStyleSheet(f"font-size:14pt;font-weight:bold;color:{color};")
+        label.setAlignment(Qt.AlignCenter)
+        self.subtitles_layout.addWidget(label)
+        self.subtitle_labels.append(label)
+
+    @Slot()
+    def hide_translation_popup(self):
+        self.translation_popup.hide()
 
 # --- Punto de Entrada ---
 if __name__ == "__main__":
