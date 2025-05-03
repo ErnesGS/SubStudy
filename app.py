@@ -220,7 +220,7 @@ class SubtitleOverlayWindow(QWidget):
         # --- NUEVO: Botón Enviar a Anki ---
         self.anki_button = QPushButton("Añadir a Anki")
         self.anki_button.clicked.connect(self.send_to_anki)
-        self.anki_button.setToolTip(f"Enviar a Anki (Mazo: {self.ANKI_DECK_NAME}, Modelo: {self.ANKI_MODEL_NAME})")
+        self.anki_button.setToolTip(f"Enviar a Anki (Mazo: {self.anki_connector.ANKI_DECK_NAME}, Modelo: {self.anki_connector.ANKI_MODEL_NAME})")
         self.anki_button.setEnabled(False) # Deshabilitado inicialmente
 
         # --- NUEVO: Botón Cerrar ---

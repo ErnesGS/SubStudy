@@ -2,54 +2,113 @@
 
 **Proyecto de Inteligencia Artificial y Big Data: SubStudy**
 
-## 1. Definición del Problema y Objetivos
+SubStudy es una aplicación de escritorio multiplataforma pensada para quienes estudian idiomas usando contenido multimedia. La app genera subtítulos en tiempo real a partir del audio del sistema o micrófono, los traduce y permite interactuar con ellos fácilmente. Además, incluye integración con Anki para crear tarjetas de memoria de forma automática y una herramienta para practicar la pronunciación.
+
+---
+
+## 1. Problema y Objetivos
 
 ### Problema a Resolver
-El aprendizaje de idiomas a través de contenido multimedia es una estrategia efectiva, pero los subtítulos tradicionales no permiten una interacción dinámica con el contenido. SubStudy busca mejorar esta experiencia proporcionando subtítulos automáticos y traducidos en tiempo real, facilitando el estudio de idiomas.
+
+Aprender idiomas con videos o streams es muy eficaz, pero los subtítulos convencionales son estáticos y no permiten interactuar más allá de la simple lectura. SubStudy mejora esta experiencia proporcionando subtítulos automáticos y traducidos en tiempo real, y herramientas prácticas para reforzar el aprendizaje.
 
 ### Objetivos
-- Desarrollar un modelo de **speech-to-text** (STT) para generar subtítulos automáticos de videos y streams.
-- Implementar un sistema de **traducción interactiva** que permita visualizar la traducción al pasar el cursor sobre una frase.
-- Integrar SubStudy con **Anki** para generar flashcards automáticamente y comprobar la pronunciación de las palabras aprendidas.
 
-## 2. Exploración del Estado del Arte y Alcance
+* Crear subtítulos automáticos a partir de cualquier fuente de audio.
+* Traducir los subtítulos al instante y permitir consultar la traducción sobre la marcha.
+* Integrar con Anki para generar tarjetas de estudio con solo un clic.
+* Incorporar un sistema para practicar la pronunciación usando reconocimiento de voz.
 
-### Estado del Arte
-Actualmente, existen herramientas como:
-- **YouTube Auto-Subtitles**: Genera subtítulos automáticos, pero sin traducción interactiva.
-- **DeepL y Google Translate**: Permiten traducciones de textos, pero sin integración con subtítulos en tiempo real.
-- **Whisper (OpenAI)**: Ofrece un sistema avanzado de speech-to-text con alta precisión.
+---
 
-### Alcance del Proyecto
-- **Primera Versión**: Generación de subtítulos automáticos y traducción interactiva.
-- **Futuras Mejoras**: Integración con múltiples fuentes de video, mejora en la detección de errores de pronunciación y personalización del aprendizaje.
+## 2. Características principales
 
-## 3. Planificación del Desarrollo
+* **Subtítulos en tiempo real** usando Whisper (OpenAI).
+* **Traducción instantánea** mediante Google Translate.
+* **Overlay interactivo**: subtítulos flotantes que se pueden mover y ajustar.
+* **Popup de traducción** al pasar el ratón sobre cada línea.
+* **Integración con Anki** (vía AnkiConnect): creación rápida de tarjetas.
+* **Práctica de pronunciación**: repasa frases y mide tu precisión.
+* **Optimización**: uso eficiente de recursos y manejo robusto de errores.
 
-| Fase | Descripción | Duración |
-|---|---|---|
-| **Investigación y selección de tecnologías** | Evaluación de APIs y modelos STT/Translate. | 2 semanas |
-| **Desarrollo del prototipo** | Implementación inicial del sistema de subtítulos y traducción. | 4 semanas |
-| **Integración con Anki** | Generación de flashcards automáticas. | 3 semanas |
-| **Optimización y pruebas** | Pruebas en distintos entornos y ajuste de algoritmos. | 3 semanas |
-| **Documentación y preparación de la presentación** | Redacción de informe y código en GitHub. | 2 semanas |
+---
 
-## 4. Herramientas y Tecnologías
+## 3. Instalación
 
-- **Lenguaje de programación**: Python.
-- **Modelos de STT**: Whisper (OpenAI).
-- **APIs de Traducción**: DeepL o Google Translate.
-- **Integración con Anki**: AnkiConnect.
-- **Interfaz de la aplicación**: PySide6/Qt
+### Requisitos
 
-## 5. Fuentes de Datos Previstas
+* Python 3.8+
+* [ffmpeg](https://ffmpeg.org/download.html) instalado y en el PATH
+* Anki con [AnkiConnect](https://foosoft.net/projects/anki-connect/)
 
-- **Audio y video en tiempo real** de plataformas como YouTube, Twitch o archivos locales.
-- **Datos generados** por los usuarios en su interacción con las traducciones y flashcards.
+### Instalación de dependencias
 
-## 6. Modo de empleo
-Para utilizar la aplicación:
-- Clona el repositorio en tu equipo.
-- **Instala las dependencias**: pip install -r requirements.txt
-- **Ejecuta la aplicación**: python app.py
-- **Generar tarjetas en Anki**: debes tener abierta la aplicación de anki y tener instalado el complemento de Ankiconect
+```bash
+pip install -r requirements.txt
+```
+
+### Configuración opcional
+
+Puedes elegir el modelo de Whisper (tiny, base, small, etc.) configurando la variable de entorno:
+
+```bash
+# Windows
+set WHISPER_MODEL_SIZE=base
+
+# Linux/Mac
+export WHISPER_MODEL_SIZE=base
+```
+
+---
+
+## 4. Uso
+
+### Subtítulos y traducción en tiempo real
+
+```bash
+python app.py
+```
+
+* Configura idioma de origen, idioma de traducción y dispositivo de audio.
+* Haz clic en "Iniciar" para comenzar.
+* Mueve y ajusta el overlay según prefieras.
+* Pasa el ratón sobre cualquier línea para ver la traducción.
+* Clic derecho para enviar la frase a Anki.
+
+### Práctica de pronunciación
+
+```bash
+python pronunciation_practice.py
+```
+
+* Pulsa "Obtener Siguiente Tarjeta de Anki".
+* Graba tu pronunciación.
+* El sistema transcribe tu audio y muestra el porcentaje de similitud con la frase original.
+
+---
+
+## 5. Estructura del proyecto
+
+* `app.py`: Overlay principal de subtítulos y traducción.
+* `transcription.py`: Motor de transcripción y traducción.
+* `anki_integration.py`: Lógica de integración con Anki.
+* `pronunciation_practice.py`: Herramienta para practicar pronunciación.
+* `requirements.txt`: Dependencias.
+
+---
+
+## 6. Notas y recomendaciones
+
+* El overlay puede necesitar permisos especiales en algunos sistemas (p. ej., en macOS para capturar audio).
+* Asegúrate de que Anki esté abierto y AnkiConnect activo antes de usar la integración.
+* Si notas problemas de rendimiento, prueba con un modelo Whisper más pequeño.
+
+---
+
+## Créditos
+
+Desarrollado por \[Tu Nombre o Equipo]. Basado en tecnologías de código abierto: OpenAI Whisper, PySide6, Google Translate y AnkiConnect.
+
+---
+
+¿Ideas o mejoras? ¡No dudes en abrir un issue o enviar un pull request!
