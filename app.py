@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, QPoint, Slot, QEvent, Signal
 from PySide6.QtGui import QMouseEvent, QPalette, QColor, QFontMetrics
+from anki_integration import AnkiConnector
 
 # Asegúrate de que transcription.py esté accesible
 try:
@@ -127,12 +128,6 @@ class TranslationPopup(QWidget):
 
 # Clase Principal Modificada
 class SubtitleOverlayWindow(QWidget):
-    # --- CONSTANTES PARA ANKI ---
-    ANKICONNECT_URL = "http://localhost:8765"
-    ANKI_DECK_NAME = "SubStudy" # Mazo por defecto
-    ANKI_MODEL_NAME = "Básico" # Modelo de nota básico
-    ANKI_FRONT_FIELD = "Anverso" # Campo para el texto original
-    ANKI_BACK_FIELD = "Reverso"   # Campo para la traducción
     SUBTITLE_DURATION = 4  # segundos que permanece cada subtítulo
     MAX_SUBTITLES = 5      # máximo de subtítulos en pantalla
 
@@ -143,6 +138,9 @@ class SubtitleOverlayWindow(QWidget):
         self._offset = None # Para arrastrar la ventana
         self.current_original = "" # Almacenar texto actual
         self.current_translation = "" # Almacenar traducción actual
+        
+        # Inicializar AnkiConnector
+        self.anki_connector = AnkiConnector()
         
         # --- Crear instancia del Popup ---
         self.translation_popup = TranslationPopup() 
@@ -256,6 +254,14 @@ class SubtitleOverlayWindow(QWidget):
         # Tamaño inicial (ajustable)
         self.resize(700, 150) 
 
+    def show_critical_error(self, message, exception=None):
+        """Muestra un error crítico y lo registra."""
+        if exception:
+            logger.error(f"{message}: {exception}")
+        else:
+            logger.error(message)
+        QMessageBox.critical(self, "Error crítico", message)
+
     def populate_audio_devices(self):
         self.audio_device_combo.clear()
         try:
@@ -263,22 +269,20 @@ class SubtitleOverlayWindow(QWidget):
             numdevices = info.get('deviceCount')
             default_device_index = -1
             try:
-                 default_info = self.audio_interface.get_default_input_device_info()
-                 default_device_index = default_info['index']
+                default_info = self.audio_interface.get_default_input_device_info()
+                default_device_index = default_info['index']
             except IOError:
-                 logger.warning("No se pudo obtener el dispositivo de entrada por defecto.")
+                logger.warning("No se pudo obtener el dispositivo de entrada por defecto.")
 
             for i in range(0, numdevices):
                 device_info = self.audio_interface.get_device_info_by_host_api_device_index(0, i)
                 if device_info.get('maxInputChannels') > 0:
                     device_name = f"({i}) {device_info.get('name')}"
-                    self.audio_device_combo.addItem(device_name, userData=i) # Guardar índice en userData
+                    self.audio_device_combo.addItem(device_name, userData=i)
                     if i == default_device_index:
-                         self.audio_device_combo.setCurrentIndex(self.audio_device_combo.count() - 1)
-
+                        self.audio_device_combo.setCurrentIndex(self.audio_device_combo.count() - 1)
         except Exception as e:
-            logger.error(f"Error al listar dispositivos de audio: {e}")
-            self.original_label.setText(f"Error audio: {e}")
+            self.show_critical_error("Error al listar dispositivos de audio", e)
 
     @Slot() # Decorador opcional pero bueno para claridad
     def start_capture(self):
@@ -473,12 +477,12 @@ class SubtitleOverlayWindow(QWidget):
         # Terminar PyAudio global si ya no se necesita
         if self.audio_interface:
             try:
-                 self.audio_interface.terminate()
-                 logger.info("Interfaz PyAudio global terminada.")
+                self.audio_interface.terminate()
+                logger.info("Interfaz PyAudio global terminada.")
             except Exception as e:
-                 logger.error(f"Error al terminar PyAudio global en closeEvent: {e}")
+                logger.error(f"Error al terminar PyAudio global en closeEvent: {e}")
             finally:
-                 self.audio_interface = None
+                self.audio_interface = None
         
         # Ocultar y cerrar el popup explícitamente
         if self.translation_popup:
@@ -503,63 +507,19 @@ class SubtitleOverlayWindow(QWidget):
 
         logger.info(f"Enviando a Anki: '{self.current_original}' / '{self.current_translation}'")
         
-        # Preparar datos para AnkiConnect
-        note_data = {
-            "deckName": self.ANKI_DECK_NAME,
-            "modelName": self.ANKI_MODEL_NAME,
-            "fields": {
-                self.ANKI_FRONT_FIELD: self.current_original,
-                self.ANKI_BACK_FIELD: self.current_translation
-            },
-            "options": {
-                "allowDuplicate": False # Evitar duplicados exactos
-            },
-            "tags": [
-                "substudy", # Etiqueta general
-                "realtime"  # Etiqueta para notas de esta app
-            ]
-        }
-        payload = json.dumps({"action": "addNote", "version": 6, "params": {"note": note_data}})
-
-        # Realizar la petición a AnkiConnect
-        try:
-            response = requests.post(self.ANKICONNECT_URL, data=payload, timeout=3) # Timeout de 3s
-            response.raise_for_status() # Lanza excepción para errores HTTP (4xx, 5xx)
-            result = response.json()
-
-            if result.get("error") is not None:
-                error_msg = result["error"]
-                logger.error(f"Error de AnkiConnect: {error_msg}")
-                # Mostrar error específico al usuario
-                if "deck was not found" in error_msg:
-                     self.show_error_message(f"Error Anki: Mazo '{self.ANKI_DECK_NAME}' no encontrado.\nPor favor, créalo en Anki.")
-                elif "model was not found" in error_msg:
-                     self.show_error_message(f"Error Anki: Modelo '{self.ANKI_MODEL_NAME}' no encontrado.\nPor favor, asegúrate de que existe.")
-                elif "duplicate" in error_msg:
-                     self.show_temporary_message("Nota duplicada (ya existe en Anki).", is_error=True)
-                else:
-                     self.show_error_message(f"Error de Anki: {error_msg}")
-            elif result.get("result") is not None:
-                logger.info(f"Nota añadida a Anki con ID: {result['result']}")
-                # Mostrar mensaje de éxito temporal en el botón
-                self.show_temporary_message("¡Enviado a Anki!", is_error=False)
-            else:
-                logger.warning(f"Respuesta inesperada de AnkiConnect: {result}")
-                self.show_error_message("Respuesta inesperada de Anki.")
-
-        except requests.exceptions.ConnectionError:
-            logger.error("Error de conexión con AnkiConnect. ¿Está Anki abierto y AnkiConnect instalado/activo?")
-            self.show_error_message("Error: No se pudo conectar con Anki.\nAsegúrate de que Anki esté abierto y AnkiConnect instalado.")
-        except requests.exceptions.Timeout:
-            logger.error("Timeout al conectar con AnkiConnect.")
-            self.show_error_message("Error: Tiempo de espera agotado al conectar con Anki.")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error en la petición a AnkiConnect: {e}")
-            self.show_error_message(f"Error de red al contactar Anki: {e}")
-        except json.JSONDecodeError:
-             logger.error("Error al decodificar la respuesta JSON de AnkiConnect.")
-             self.show_error_message("Error: Respuesta inválida de Anki.")
-
+        # Usar el AnkiConnector
+        success, message = self.anki_connector.add_note(
+            self.current_original, 
+            self.current_translation,
+            tags=["substudy", "realtime"]
+        )
+        
+        if success:
+            # Mostrar mensaje de éxito temporal en el botón
+            self.show_temporary_message("¡Enviado a Anki!", is_error=False)
+        else:
+            # Mostrar mensaje de error
+            self.show_error_message(message)
 
     # --- Funciones auxiliares para mensajes ---
     def show_error_message(self, message):

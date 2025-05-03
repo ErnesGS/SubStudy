@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, Slot, Signal, QObject, QSize, QThread
 from fuzzywuzzy import fuzz  # Para comparación de texto
+from anki_integration import AnkiConnector
 
 # Reutilizar TranscriptionManager para la transcripción
 try:
@@ -35,12 +36,6 @@ class WorkerSignals(QObject):
     error = Signal(str) # Mensaje de error general
 
 class PronunciationWorker(QObject):
-    ANKICONNECT_URL = "http://localhost:8765"
-    ANKI_DECK_NAME = "SubStudy" 
-    ANKI_MODEL_NAME = "Básico" 
-    ANKI_FRONT_FIELD = "Anverso" 
-    ANKI_BACK_FIELD = "Reverso"
-
     # Audio Recording Params
     CHUNK = 1024 * 2
     FORMAT = pyaudio.paInt16
@@ -57,57 +52,46 @@ class PronunciationWorker(QObject):
         self.is_recording = False
         self.stream = None
         self.frames = []
+        # Inicializar AnkiConnector
+        self.anki_connector = AnkiConnector()
 
     @Slot()
     def fetch_card(self):
         logger.info("Worker: Buscando tarjetas en Anki...")
-        query = f'deck:"{self.ANKI_DECK_NAME}" is:due' # Buscar tarjetas vencidas en el mazo
-        fetched_card_id = None # Variable local para el ID numérico
-        try:
-            # 1. Encontrar tarjetas
-            payload_find = json.dumps({"action": "findCards", "version": 6, "params": {"query": query}})
-            response_find = requests.post(self.ANKICONNECT_URL, data=payload_find, timeout=3)
-            response_find.raise_for_status()
-            result_find = response_find.json()
-
-            if result_find.get("error"):
-                raise ConnectionError(f"AnkiConnect Error (findCards): {result_find['error']}")
-            
-            card_ids = result_find.get("result", [])
-            if not card_ids:
-                logger.info("No se encontraron tarjetas vencidas.")
-                self.signals.card_fetched.emit("", "-1", f"No hay tarjetas para repasar en '{self.ANKI_DECK_NAME}'.")
-                return
-
-            # 2. Obtener información de la primera tarjeta encontrada
-            fetched_card_id = card_ids[0] # Guardar el ID numérico localmente
-            payload_info = json.dumps({"action": "cardsInfo", "version": 6, "params": {"cards": [fetched_card_id]}})
-            response_info = requests.post(self.ANKICONNECT_URL, data=payload_info, timeout=3)
-            response_info.raise_for_status()
-            result_info = response_info.json()
-
-            if result_info.get("error"):
-                 raise ConnectionError(f"AnkiConnect Error (cardsInfo): {result_info['error']}")
-
-            card_info = result_info.get("result", [])
-            if not card_info:
-                 raise ValueError("No se pudo obtener información de la tarjeta.")
-            
-            # Extraer el campo frontal (Anverso)
-            phrase = card_info[0]["fields"].get(self.ANKI_FRONT_FIELD, {}).get("value", "")
-            if not phrase:
-                 raise ValueError(f"El campo '{self.ANKI_FRONT_FIELD}' está vacío en la tarjeta.")
-
-            logger.info(f"Tarjeta obtenida (ID: {fetched_card_id}): '{phrase}'")
-            self.current_card_id = fetched_card_id # Guardar internamente (opcional, puede ser str también)
-            self.signals.card_fetched.emit(phrase, str(fetched_card_id), "") # Éxito
-
-        except requests.exceptions.ConnectionError:
-            logger.error("Error de conexión con AnkiConnect.")
-            self.signals.card_fetched.emit("", "-1", "Error: No se pudo conectar con Anki.\nAsegúrate de que esté abierto.")
-        except Exception as e:
-            logger.error(f"Error al obtener tarjeta de Anki: {e}")
-            self.signals.card_fetched.emit("", "-1", f"Error Anki: {e}")
+        
+        # Buscar tarjetas vencidas
+        success, result = self.anki_connector.find_due_cards()
+        
+        if not success:
+            logger.error(f"Error al buscar tarjetas: {result}")
+            self.signals.card_fetched.emit("", "-1", result)
+            return
+        
+        card_ids = result
+        if not card_ids:
+            logger.info("No se encontraron tarjetas vencidas.")
+            self.signals.card_fetched.emit("", "-1", f"No hay tarjetas para repasar en '{self.anki_connector.ANKI_DECK_NAME}'.")
+            return
+        
+        # Obtener información de la primera tarjeta
+        card_id = card_ids[0]
+        success, card_info = self.anki_connector.get_card_info(card_id)
+        
+        if not success:
+            logger.error(f"Error al obtener información de tarjeta: {card_info}")
+            self.signals.card_fetched.emit("", "-1", card_info)
+            return
+        
+        # Extraer el campo frontal
+        phrase = card_info["fields"].get(self.anki_connector.ANKI_FRONT_FIELD, {}).get("value", "")
+        if not phrase:
+            logger.error(f"El campo '{self.anki_connector.ANKI_FRONT_FIELD}' está vacío en la tarjeta.")
+            self.signals.card_fetched.emit("", "-1", f"El campo '{self.anki_connector.ANKI_FRONT_FIELD}' está vacío.")
+            return
+        
+        logger.info(f"Tarjeta obtenida (ID: {card_id}): '{phrase}'")
+        self.current_card_id = card_id
+        self.signals.card_fetched.emit(phrase, str(card_id), "")
 
     @Slot()
     def start_recording(self):

@@ -13,62 +13,27 @@ import threading
 import time
 import pyaudio
 import ffmpeg
+import subprocess
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def check_ffmpeg():
-    """Verifica si ffmpeg está instalado y accesible."""
+    """Verifica si ffmpeg está instalado y accesible en el PATH."""
     try:
-        logger.info("Verificando instalación de ffmpeg...")
-        # Verificar que ffmpeg está en el PATH
-        import subprocess
         result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
-        logger.info(f"ffmpeg version output: {result.stdout[:100]}...")  # Mostrar primeros 100 caracteres
-        
-        # Configurar pydub
-        logger.info("Configurando pydub con ffmpeg...")
-        AudioSegment.converter = "ffmpeg"
-        AudioSegment.ffmpeg = "ffmpeg"
-        AudioSegment.ffprobe = "ffprobe"
-        
-        # Intentar una operación simple para verificar
-        logger.info("Intentando operación de prueba con ffmpeg...")
-        test_file = "test.wav"
-        # Crear un archivo de audio de prueba
-        audio = AudioSegment.silent(duration=1000)  # 1 segundo de silencio
-        audio.export(test_file, format="wav")
-        logger.info(f"Archivo de prueba creado: {test_file}")
-        
-        # Intentar leer el archivo
-        test_audio = AudioSegment.from_file(test_file, format="wav")
-        logger.info("Operación de prueba exitosa")
-        
-        # Limpiar el archivo de prueba
-        if os.path.exists(test_file):
-            os.remove(test_file)
-            logger.info("Archivo de prueba eliminado")
-        
-        return True
+        if result.returncode == 0:
+            # Configurar pydub para usar ffmpeg si es necesario
+            AudioSegment.converter = "ffmpeg"
+            AudioSegment.ffmpeg = "ffmpeg"
+            AudioSegment.ffprobe = "ffprobe"
+            return True
+        else:
+            logger.error("ffmpeg no está disponible en el PATH del sistema.")
+            return False
     except Exception as e:
-        logger.error(f"Error al verificar ffmpeg: {e}")
-        logger.error("""
-        ffmpeg no está instalado o no está en el PATH del sistema.
-        Por favor, instala ffmpeg siguiendo estos pasos:
-        1. Descarga ffmpeg de https://ffmpeg.org/download.html
-           - Ve a la sección "Windows Builds"
-           - Descarga el archivo "ffmpeg-release-essentials.zip"
-        2. Extrae el archivo ZIP en una carpeta (por ejemplo, C:\\ffmpeg)
-        3. Añade la ruta a la variable de entorno PATH del sistema:
-           - Abre el Panel de Control
-           - Sistema y Seguridad > Sistema
-           - Configuración avanzada del sistema
-           - Variables de entorno
-           - En Variables del sistema, edita PATH
-           - Añade la ruta a la carpeta de ffmpeg (por ejemplo, C:\\ffmpeg)
-        4. Reinicia PowerShell o tu terminal
-        """)
+        logger.error(f"ffmpeg no está instalado o no es accesible: {e}")
         return False
 
 class RealTimeTranscriptionManager:
