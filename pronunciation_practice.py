@@ -6,6 +6,7 @@ import json
 import wave
 import tempfile
 import os
+import random
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QProgressBar, QMessageBox, QTextEdit, QFrame
@@ -58,37 +59,28 @@ class PronunciationWorker(QObject):
     @Slot()
     def fetch_card(self):
         logger.info("Worker: Buscando tarjetas en Anki...")
-        
-        # Buscar tarjetas vencidas
         success, result = self.anki_connector.find_due_cards()
-        
         if not success:
             logger.error(f"Error al buscar tarjetas: {result}")
             self.signals.card_fetched.emit("", "-1", result)
             return
-        
         card_ids = result
         if not card_ids:
             logger.info("No se encontraron tarjetas vencidas.")
             self.signals.card_fetched.emit("", "-1", f"No hay tarjetas para repasar en '{self.anki_connector.ANKI_DECK_NAME}'.")
             return
-        
-        # Obtener información de la primera tarjeta
-        card_id = card_ids[0]
+        # Selección aleatoria
+        card_id = random.choice(card_ids)
         success, card_info = self.anki_connector.get_card_info(card_id)
-        
         if not success:
             logger.error(f"Error al obtener información de tarjeta: {card_info}")
             self.signals.card_fetched.emit("", "-1", card_info)
             return
-        
-        # Extraer el campo frontal
         phrase = card_info["fields"].get(self.anki_connector.ANKI_FRONT_FIELD, {}).get("value", "")
         if not phrase:
             logger.error(f"El campo '{self.anki_connector.ANKI_FRONT_FIELD}' está vacío en la tarjeta.")
             self.signals.card_fetched.emit("", "-1", f"El campo '{self.anki_connector.ANKI_FRONT_FIELD}' está vacío.")
             return
-        
         logger.info(f"Tarjeta obtenida (ID: {card_id}): '{phrase}'")
         self.current_card_id = card_id
         self.signals.card_fetched.emit(phrase, str(card_id), "")
@@ -217,7 +209,7 @@ class PronunciationPracticeWindow(QWidget):
         
         self.fetch_button = QPushButton("Obtener Siguiente Tarjeta de Anki")
         self.fetch_button.clicked.connect(self.request_fetch_card)
-        
+
         self.phrase_label = QLabel("Presiona 'Obtener Tarjeta' para empezar.")
         self.phrase_label.setStyleSheet("font-size: 18pt; font-weight: bold; border: 1px solid #555; padding: 15px; background-color: #333; border-radius: 5px;")
         self.phrase_label.setAlignment(Qt.AlignCenter)
@@ -367,7 +359,6 @@ class PronunciationPracticeWindow(QWidget):
          # Restaurar botones a un estado seguro
          self.fetch_button.setEnabled(True)
          self.record_button.setEnabled(bool(self.current_phrase)) # Habilitar si hay frase
-
 
     # --- Lógica de Comparación (en el hilo GUI) ---
     def compare_and_display_score(self, transcribed_text):

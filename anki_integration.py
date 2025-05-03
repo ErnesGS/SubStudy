@@ -80,7 +80,7 @@ class AnkiConnector:
         Returns:
             tuple: (success, [card_ids] o mensaje_error)
         """
-        query = f'deck:"{self.ANKI_DECK_NAME}" is:due'
+        query = f'deck:"{self.ANKI_DECK_NAME}" (is:due OR is:new)'
         
         try:
             payload = json.dumps({"action": "findCards", "version": 6, "params": {"query": query}})

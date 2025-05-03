@@ -105,8 +105,8 @@ class TranslationPopup(QWidget):
         self.label.setWordWrap(True)
         
         frame_layout.addWidget(self.label) # Añadir label al layout del frame
-        self.anki_button = QPushButton("Añadir a Anki", self.frame)
-        self.anki_button.setStyleSheet("background-color: #40b040; color: white; border-radius: 4px;")
+        self.anki_button = QPushButton("", self.frame)
+        self.anki_button.setStyleSheet("background-color: rgba(40, 40, 40, 0.9); border-radius: 0px;")
         self.anki_button.clicked.connect(self._emit_add_to_anki)
         frame_layout.addWidget(self.anki_button)
         layout.addWidget(self.frame)
