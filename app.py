@@ -154,7 +154,7 @@ class SubtitleOverlayWindow(QWidget):
         # Timer para actualizar subtítulos
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.update_subtitles_display)
-        self.update_interval_ms = 150 # Reducido desde 300 
+        self.update_interval_ms = 150 
 
     def init_ui(self):
         self.setWindowTitle("SubStudy Overlay")
@@ -252,7 +252,9 @@ class SubtitleOverlayWindow(QWidget):
         self.setLayout(main_layout)
 
         # Tamaño inicial (ajustable)
-        self.resize(700, 150) 
+        self.resize(700, 150)
+        max_width = min(700, 150) 
+        self.setMaximumWidth(max_width)
 
     def show_critical_error(self, message, exception=None):
         """Muestra un error crítico y lo registra."""

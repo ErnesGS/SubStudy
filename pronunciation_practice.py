@@ -198,9 +198,10 @@ class PronunciationPracticeWindow(QWidget):
 
 
     def init_ui(self):
+        
         self.setWindowTitle("SubStudy - Práctica de Pronunciación")
         self.setMinimumSize(500, 350)
-
+        self.setMaximumWidth(500, 350)
         main_layout = QVBoxLayout(self)
 
         # --- Sección Tarjeta Anki ---

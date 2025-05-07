@@ -329,7 +329,7 @@ class TranscriptionManager:
         try:
             logger.info("Inicializando modelo Whisper...")
             # Usar el modelo base que es más rápido y requiere menos recursos
-            self.model = whisper.load_model("base")
+            self.model = whisper.load_model("medium")
             logger.info("Modelo Whisper inicializado correctamente")
             self.translator = Translator()
             
