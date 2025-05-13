@@ -128,7 +128,7 @@ class TranslationPopup(QWidget):
 
 # Clase Principal Modificada
 class SubtitleOverlayWindow(QWidget):
-    SUBTITLE_DURATION = 4  # segundos que permanece cada subtítulo
+    SUBTITLE_DURATION = 15  # segundos que permanece cada subtítulo
     MAX_SUBTITLES = 5      # máximo de subtítulos en pantalla
 
     def __init__(self):
