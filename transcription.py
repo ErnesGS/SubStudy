@@ -45,7 +45,7 @@ class RealTimeTranscriptionManager:
             # Crear PyAudio Interface primero
             self.audio_interface = pyaudio.PyAudio()
 
-            # Cargar modelo y traductor (pueden tardar o fallar)
+            # Cargar modelo y traductor
             self.model = whisper.load_model("base")
             self.translator = Translator()
             
@@ -406,63 +406,3 @@ class TranscriptionManager:
         except Exception as e:
             logger.error(f"Error en la traducción: {e}")
             return text  # Retorna el texto original si hay error
-    
-    def process_video(self, video_path: str, source_lang: str, target_lang: str) -> List[Dict]:
-        """
-        Procesa un video completo: extrae audio, transcribe y traduce.
-        
-        Args:
-            video_path: Ruta al archivo de video
-            source_lang: Idioma del video
-            target_lang: Idioma objetivo para traducción
-            
-        Returns:
-            Lista de segmentos con texto original y traducido
-        """
-        temp_dir = None
-        audio_path = None
-        
-        try:
-            logger.info(f"Procesando video: {video_path}")
-            logger.info(f"El archivo existe: {os.path.exists(video_path)}")
-            
-            # Verificar que el archivo existe
-            if not os.path.exists(video_path):
-                raise FileNotFoundError(f"El archivo {video_path} no existe")
-            
-            # Crear un directorio temporal único
-            temp_dir = tempfile.mkdtemp(prefix="substudy_")
-            audio_path = os.path.join(temp_dir, "audio.wav")
-            
-            # Extraer audio del video
-            logger.info("Extrayendo audio del video...")
-            video = AudioSegment.from_file(video_path)
-            video.export(audio_path, format="wav")
-            logger.info(f"Audio extraído y guardado en: {audio_path}")
-            
-            # Verificar que el archivo de audio se creó correctamente
-            if not os.path.exists(audio_path):
-                raise FileNotFoundError(f"No se pudo crear el archivo de audio: {audio_path}")
-            
-            # Transcribir audio
-            logger.info("Iniciando transcripción...")
-            segments = self.transcribe_audio(audio_path, source_lang)
-            
-            # Traducir cada segmento
-            logger.info("Iniciando traducción...")
-            for segment in segments:
-                segment["translation"] = self.translate_text(segment["text"], target_lang)
-            
-            return segments
-            
-        except Exception as e:
-            logger.error(f"Error en el procesamiento del video: {e}")
-            raise
-        finally:
-            # Limpiar archivos temporales
-            if temp_dir and os.path.exists(temp_dir):
-                try:
-                    shutil.rmtree(temp_dir)
-                    logger.info("Archivos temporales eliminados correctamente")
-                except Exception as e:
-                    logger.error(f"Error al limpiar archivos temporales: {e}") 
