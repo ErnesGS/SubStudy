@@ -1,4 +1,4 @@
-import whisper
+import vosk
 from googletrans import Translator
 import os
 from typing import List, Dict
@@ -14,17 +14,88 @@ import time
 import pyaudio
 import ffmpeg
 import subprocess
+import urllib.request
+import zipfile
+import json
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def download_model(model_dir: str = "models", language: str = "es") -> str:
+    """Descarga el modelo de Vosk según el idioma especificado."""
+    os.makedirs(model_dir, exist_ok=True)
+    
+    # Definir modelos disponibles
+    models = {
+        "es": {
+            "name": "vosk-model-small-es-0.42",
+            "url": "https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip"
+        },
+        "en": {
+            "name": "vosk-model-small-en-us-0.15",
+            "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+        }
+    }
+    
+    # Seleccionar modelo según el idioma
+    if language not in models:
+        logger.warning(f"Idioma {language} no soportado, usando español por defecto")
+        language = "es"
+    
+    model_info = models[language]
+    model_name = model_info["name"]
+    model_path = os.path.join(model_dir, model_name)
+    
+    if not os.path.exists(model_path):
+        logger.info(f"Descargando modelo Vosk para {language}...")
+        model_url = model_info["url"]
+        zip_path = os.path.join(model_dir, "model.zip")
+        
+        try:
+            # Descargar el modelo
+            logger.info(f"Descargando modelo desde {model_url}")
+            urllib.request.urlretrieve(model_url, zip_path)
+            
+            # Verificar que el archivo se descargó correctamente
+            if not os.path.exists(zip_path):
+                raise FileNotFoundError("El archivo del modelo no se descargó correctamente")
+            
+            # Extraer el modelo
+            logger.info("Extrayendo modelo...")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(model_dir)
+            
+            # Verificar que el modelo se extrajo correctamente
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"El modelo no se extrajo correctamente en {model_path}")
+            
+            # Limpiar el archivo zip
+            os.remove(zip_path)
+            logger.info(f"Modelo descargado y extraído correctamente en {model_path}")
+            
+            # Verificar la estructura del modelo
+            required_files = ['am', 'conf', 'graph', 'ivector']
+            for file in required_files:
+                if not os.path.exists(os.path.join(model_path, file)):
+                    raise FileNotFoundError(f"Falta el archivo/directorio requerido: {file}")
+            
+        except Exception as e:
+            logger.error(f"Error al descargar o extraer el modelo: {e}")
+            # Limpiar archivos parciales en caso de error
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+            if os.path.exists(model_path):
+                shutil.rmtree(model_path)
+            raise
+    
+    return model_path
 
 def check_ffmpeg():
     """Verifica si ffmpeg está instalado y accesible en el PATH."""
     try:
         result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
         if result.returncode == 0:
-            # Configurar pydub para usar ffmpeg si es necesario
             AudioSegment.converter = "ffmpeg"
             AudioSegment.ffmpeg = "ffmpeg"
             AudioSegment.ffprobe = "ffprobe"
@@ -38,15 +109,32 @@ def check_ffmpeg():
 
 class RealTimeTranscriptionManager:
     def __init__(self, source_lang: str, target_lang: str):
-        self.audio_interface = None # Inicializar a None
+        self.audio_interface = None
         try:
             logger.info("Inicializando RealTimeTranscriptionManager con PyAudio...")
             
-            # Crear PyAudio Interface primero
+            # Crear PyAudio Interface
             self.audio_interface = pyaudio.PyAudio()
 
-            # Cargar modelo y traductor
-            self.model = whisper.load_model("base")
+            # Inicializar Vosk
+            try:
+                # Mapear códigos de idioma a códigos de modelo
+                lang_map = {
+                    "es": "es",
+                    "en": "en",
+                    "auto": "en"  # Por defecto usar inglés si es auto
+                }
+                model_lang = lang_map.get(source_lang, "en")
+                
+                model_path = download_model(language=model_lang)
+                logger.info(f"Inicializando modelo Vosk desde {model_path} para idioma {model_lang}")
+                self.model = vosk.Model(model_path)
+                self.recognizer = vosk.KaldiRecognizer(self.model, 16000)
+                logger.info("Modelo Vosk inicializado correctamente")
+            except Exception as e:
+                logger.error(f"Error al inicializar el modelo Vosk: {e}")
+                raise
+            
             self.translator = Translator()
             
             self.source_lang = source_lang
@@ -70,30 +158,95 @@ class RealTimeTranscriptionManager:
             
         except Exception as e:
             logger.error(f"Error al inicializar RealTimeTranscriptionManager: {e}")
-            # Asegurarse de terminar PyAudio si se creó pero algo más falló
             if self.audio_interface:
                 try:
                     self.audio_interface.terminate()
                     logger.info("Interfaz de PyAudio terminada debido a error de inicialización.")
                 except Exception as term_error:
-                     logger.error(f"Error al terminar PyAudio durante manejo de error inicial: {term_error}")
-            raise # Relanzar la excepción original
-            
-    def list_audio_devices(self):
-        """Lista los dispositivos de entrada de audio disponibles."""
-        logger.info("Dispositivos de entrada de audio disponibles:")
-        info = self.audio_interface.get_host_api_info_by_index(0)
-        numdevices = info.get('deviceCount')
-        devices = []
-        for i in range(0, numdevices):
-            device_info = self.audio_interface.get_device_info_by_host_api_device_index(0, i)
-            if device_info.get('maxInputChannels') > 0:
-                device_name = device_info.get('name')
-                logger.info(f"  Índice {i}: {device_name}")
-                devices.append({"index": i, "name": device_name})
-        if not devices:
-             logger.warning("No se encontraron dispositivos de entrada de audio.")
-        return devices
+                    logger.error(f"Error al terminar PyAudio durante manejo de error inicial: {term_error}")
+            raise
+
+    def _process_audio(self):
+        """Consume datos de la cola de audio, transcribe y traduce."""
+        logger.info("Iniciando procesamiento de la cola de audio...")
+        audio_buffer = []
+        frames_to_process = int(self.RATE / self.CHUNK * 2)  # 0.5 segundos de buffer
+        last_text = ""  # Para almacenar el último texto procesado
+        
+        while self.is_running:
+            try:
+                chunk = self.audio_queue.get(timeout=1)
+                audio_buffer.append(chunk)
+                
+                if len(audio_buffer) >= frames_to_process:
+                    raw_data = b''.join(audio_buffer)
+                    audio_buffer = []  # Limpiar buffer para el siguiente ciclo
+                    
+                    if len(raw_data) > 0:
+                        try:
+                            # Realizar la transcripción con Vosk
+                            if self.recognizer.AcceptWaveform(raw_data):
+                                result = json.loads(self.recognizer.Result())
+                                current_text = result.get("text", "").strip()
+                                
+                                if current_text and current_text != last_text:
+                                    # Obtener solo el texto nuevo
+                                    new_text = current_text[len(last_text):].strip()
+                                    if new_text:
+                                        logger.info(f"Transcripción: {new_text}")
+                                        
+                                        # Traducir el texto nuevo
+                                        translation = self.translator.translate(new_text, dest=self.target_lang)
+                                        
+                                        # Añadir a la cola de subtítulos
+                                        self.subtitle_queue.put({
+                                            "text": new_text,
+                                            "translation": translation.text,
+                                            "start": time.time(),
+                                            "end": time.time() + 2
+                                        })
+                                        logger.info(f"Traducción: {translation.text}")
+                                    
+                                    # Actualizar el último texto procesado
+                                    last_text = current_text
+                            else:
+                                # Obtener resultado parcial
+                                partial = json.loads(self.recognizer.PartialResult())
+                                partial_text = partial.get("partial", "").strip()
+                                
+                                if partial_text and partial_text != last_text:
+                                    # Obtener solo el texto nuevo del parcial
+                                    new_text = partial_text[len(last_text):].strip()
+                                    if new_text:
+                                        # Traducir el texto parcial nuevo
+                                        translation = self.translator.translate(new_text, dest=self.target_lang)
+                                        
+                                        # Añadir a la cola de subtítulos
+                                        self.subtitle_queue.put({
+                                            "text": new_text,
+                                            "translation": translation.text,
+                                            "start": time.time(),
+                                            "end": time.time() + 1
+                                        })
+                                    
+                                    # Actualizar el último texto procesado
+                                    last_text = partial_text
+                                    
+                        except Exception as e:
+                            logger.error(f"Error en la transcripción de Vosk: {e}")
+
+                    # Limpiar la cola para evitar acumulación
+                    while not self.audio_queue.empty():
+                        try:
+                            self.audio_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                            
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error en el procesamiento de audio: {e}")
+                continue
 
     def start_processing(self, input_device_index: int = None):
         """Inicia la captura y procesamiento de audio."""
@@ -172,89 +325,6 @@ class RealTimeTranscriptionManager:
                 break # Salir en caso de error inesperado
         logger.info("Lectura de audio finalizada.")
 
-    def _process_audio(self):
-        """Consume datos de la cola de audio, transcribe y traduce."""
-        logger.info("Iniciando procesamiento de la cola de audio...")
-        audio_buffer = []
-        frames_to_process = int(self.RATE / self.CHUNK * self.RECORD_SECONDS)
-        
-        while self.is_running:
-            try:
-                # Esperar datos en la cola
-                chunk = self.audio_queue.get(timeout=1) # Esperar 1 segundo
-                audio_buffer.append(chunk)
-                
-                if len(audio_buffer) >= frames_to_process:
-                    # Unir los chunks del buffer
-                    raw_data = b''.join(audio_buffer)
-                    audio_buffer = [] # Limpiar buffer para el siguiente ciclo
-                    
-                    # Convertir a formato numpy float32 (requerido por Whisper)
-                    audio_np = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
-                    
-                    if audio_np.size > 0:
-                        logger.info(f"Procesando {len(raw_data)/2/self.RATE:.2f} segundos de audio...")
-                        # Transcribir el audio acumulado
-                        options = {
-                            "language": self.source_lang if self.source_lang != "auto" else None,
-                            "task": "transcribe",
-                            "fp16": torch.cuda.is_available()
-                        }
-                        
-                        result = self.model.transcribe(audio_np, **options)
-                        
-                        if result and result["text"].strip():
-                            logger.info(f"Transcripción: {result['text']}")
-                            
-                            # Procesar cada segmento detectado
-                            # Whisper puede devolver un solo texto o segmentos
-                            if "segments" in result and result["segments"]:
-                                for segment in result["segments"]:
-                                    text = segment["text"].strip()
-                                    if text:
-                                        # Traducir el texto
-                                        translation = self.translator.translate(text, dest=self.target_lang)
-                                        
-                                        # Añadir a la cola de subtítulos
-                                        # Nota: Los timestamps de Whisper en trozos cortos pueden no ser precisos
-                                        # o relativos al inicio del chunk, no al inicio global.
-                                        # Para tiempo real simple, podemos omitir start/end o usar un contador.
-                                        self.subtitle_queue.put({
-                                            "text": text,
-                                            "translation": translation.text,
-                                            "start": time.time(), # Usar tiempo actual como referencia simple
-                                            "end": time.time() + 5 # Duración estimada
-                                        })
-                                        logger.info(f"Traducción: {translation.text}")
-                            else: # Si no hay segmentos, usar el texto completo
-                                 text = result["text"].strip()
-                                 if text:
-                                     translation = self.translator.translate(text, dest=self.target_lang)
-                                     self.subtitle_queue.put({
-                                          "text": text,
-                                          "translation": translation.text,
-                                          "start": time.time(),
-                                          "end": time.time() + 5
-                                     })
-                                     logger.info(f"Traducción: {translation.text}")
-
-                    # Limpiar la cola para evitar acumulación si el procesamiento es lento
-                    while not self.audio_queue.empty():
-                        try:
-                            self.audio_queue.get_nowait()
-                        except queue.Empty:
-                            break
-                            
-            except queue.Empty:
-                # No hay datos en la cola, continuar esperando
-                continue
-            except Exception as e:
-                logger.error(f"Error en el procesamiento de audio: {e}")
-                # Pausar brevemente para evitar bucles de error rápidos
-                time.sleep(0.1)
-        
-        logger.info("Procesamiento de audio finalizado.")
-
     def stop_processing(self):
         """Detiene la captura y el procesamiento."""
         logger.info("Intentando detener el procesamiento...")
@@ -324,85 +394,18 @@ class RealTimeTranscriptionManager:
         # O implementar lógica para mostrar solo los más recientes
         return subtitles
 
-class TranscriptionManager:
-    def __init__(self):
-        try:
-            logger.info("Inicializando modelo Whisper...")
-            # Usar el modelo base que es más rápido y requiere menos recursos
-            self.model = whisper.load_model("medium")
-            logger.info("Modelo Whisper inicializado correctamente")
-            self.translator = Translator()
-            
-            # Verificar ffmpeg
-            if not check_ffmpeg():
-                logger.warning("ffmpeg no está instalado correctamente. Algunas funciones pueden no funcionar.")
-        except Exception as e:
-            logger.error(f"Error al inicializar el modelo: {e}")
-            raise
-    
-    def transcribe_audio(self, audio_path: str, language: str) -> List[Dict]:
-        """
-        Transcribe el audio a texto usando Whisper.
-        
-        Args:
-            audio_path: Ruta al archivo de audio
-            language: Código de idioma del audio
-            
-        Returns:
-            Lista de diccionarios con el texto y timestamps
-        """
-        try:
-            logger.info(f"Intentando transcribir archivo: {audio_path}")
-            logger.info(f"El archivo existe: {os.path.exists(audio_path)}")
-            logger.info(f"Tamaño del archivo: {os.path.getsize(audio_path)} bytes")
-            
-            # Verificar que el archivo existe y no está vacío
-            if not os.path.exists(audio_path):
-                raise FileNotFoundError(f"El archivo {audio_path} no existe")
-            if os.path.getsize(audio_path) == 0:
-                raise ValueError(f"El archivo {audio_path} está vacío")
-            
-            # Configurar opciones de transcripción
-            options = {
-                "language": language if language != "auto" else None,
-                "task": "transcribe",
-                "fp16": torch.cuda.is_available()  # Usar precisión mixta si hay GPU
-            }
-            
-            logger.info(f"Opciones de transcripción: {options}")
-            result = self.model.transcribe(audio_path, **options)
-            logger.info("Transcripción completada")
-            
-            # Convertir el resultado al formato esperado
-            segments = []
-            for segment in result["segments"]:
-                segments.append({
-                    "text": segment["text"].strip(),
-                    "start": segment["start"],
-                    "end": segment["end"]
-                })
-            
-            return segments
-        except Exception as e:
-            logger.error(f"Error en la transcripción: {e}")
-            raise
-    
-    def translate_text(self, text: str, target_lang: str) -> str:
-        """
-        Traduce el texto usando Google Translate.
-        
-        Args:
-            text: Texto a traducir
-            target_lang: Idioma objetivo
-            
-        Returns:
-            Texto traducido
-        """
-        try:
-            logger.info(f"Traduciendo texto a {target_lang}")
-            translation = self.translator.translate(text, dest=target_lang)
-            logger.info("Traducción completada")
-            return translation.text
-        except Exception as e:
-            logger.error(f"Error en la traducción: {e}")
-            return text  # Retorna el texto original si hay error
+    def list_audio_devices(self):
+        """Lista los dispositivos de entrada de audio disponibles."""
+        logger.info("Dispositivos de entrada de audio disponibles:")
+        info = self.audio_interface.get_host_api_info_by_index(0)
+        numdevices = info.get('deviceCount')
+        devices = []
+        for i in range(0, numdevices):
+            device_info = self.audio_interface.get_device_info_by_host_api_device_index(0, i)
+            if device_info.get('maxInputChannels') > 0:
+                device_name = device_info.get('name')
+                logger.info(f"  Índice {i}: {device_name}")
+                devices.append({"index": i, "name": device_name})
+        if not devices:
+             logger.warning("No se encontraron dispositivos de entrada de audio.")
+        return devices

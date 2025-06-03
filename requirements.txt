@@ -3,7 +3,7 @@
 # Descarga de https://ffmpeg.org/download.html y añade al PATH si es necesario.
 
 # Core dependencies
-openai-whisper>=20231117
+vosk>=0.3.45
 pyaudio>=0.2.11
 torch>=1.10.0
 numpy>=1.20.0
