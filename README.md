@@ -107,7 +107,7 @@ python pronunciation_practice.py
 
 ## Créditos
 
-Desarrollado por \[Tu Nombre o Equipo]. Basado en tecnologías de código abierto: OpenAI Whisper, PySide6, Google Translate y AnkiConnect.
+Desarrollado por ErnesGS. Basado en tecnologías de código abierto: OpenAI Whisper, PySide6, Google Translate y AnkiConnect.
 
 ---
 
